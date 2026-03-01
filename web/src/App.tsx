@@ -217,6 +217,23 @@ export default function App() {
             onExpand={setExp}
             onRemove={i => setSongs(songs.filter((_, j) => j !== i))}
             onFullscreen={(songIdx, slideIdx) => setFs({ slides: songs[songIdx].slides, start: slideIdx, songIndex: songIdx })}
+            onSlideInsert={(songIdx, afterSlideIdx) => {
+              setSongs(prev => prev.map((song, si) => {
+                if (si !== songIdx) return song;
+                const newSlides = [...song.slides];
+                newSlides.splice(afterSlideIdx + 1, 0, { original: [], translation: [] });
+                return { ...song, slides: newSlides, count: newSlides.length, file: slidesToFile(newSlides, song.filename) };
+              }));
+              setPublished(null);
+            }}
+            onSlideDelete={(songIdx, slideIdx) => {
+              setSongs(prev => prev.map((song, si) => {
+                if (si !== songIdx || song.slides.length <= 1) return song;
+                const newSlides = song.slides.filter((_, j) => j !== slideIdx);
+                return { ...song, slides: newSlides, count: newSlides.length, file: slidesToFile(newSlides, song.filename) };
+              }));
+              setPublished(null);
+            }}
           />
         )}
 

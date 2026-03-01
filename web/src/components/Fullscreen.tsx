@@ -11,10 +11,6 @@ const origHeight = (750 / 1080) * 100;
 const transTop = (270 / 1080) * 100;
 const transHeight = (600 / 1080) * 100;
 
-function escapeHtml(t: string) {
-  return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 const pill = (active?: boolean): React.CSSProperties => ({
   width: 36, height: 36, borderRadius: "50%",
   background: active ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.08)",
@@ -36,6 +32,65 @@ const spinnerCSS = `
   input[type=number].pt-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   input[type=number].pt-input{-moz-appearance:textfield}
 `;
+
+/** Ref-based contentEditable line — avoids React overwriting user edits */
+function EditableLine({ text, field, lineIdx, color, fontSize, fontWeight, editable, onUpdate, onFieldFocus, onFieldBlur }: {
+  text: string;
+  field: 'original' | 'translation';
+  lineIdx: number;
+  color: string;
+  fontSize: number;
+  fontWeight: number;
+  editable?: boolean;
+  onUpdate: (field: 'original' | 'translation', lineIdx: number, text: string) => void;
+  onFieldFocus: (field: 'original' | 'translation') => void;
+  onFieldBlur: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const localText = useRef(text);
+
+  // Set content on mount and when text changes from parent state
+  useEffect(() => {
+    if (ref.current) {
+      // Only update DOM if the state value differs from what we're tracking
+      if (localText.current !== text) {
+        ref.current.textContent = text;
+      }
+      localText.current = text;
+    }
+  }, [text]);
+
+  return (
+    <div
+      ref={el => {
+        (ref as React.MutableRefObject<HTMLDivElement | null>).current = el;
+        // Set initial content on mount
+        if (el && !el.textContent) el.textContent = text;
+      }}
+      contentEditable={editable}
+      suppressContentEditableWarning
+      data-edit-region
+      onFocus={() => onFieldFocus(field)}
+      onInput={() => {
+        if (ref.current) localText.current = ref.current.textContent || '';
+      }}
+      onBlur={() => {
+        const t = localText.current;
+        if (t !== text) onUpdate(field, lineIdx, t);
+        onFieldBlur();
+      }}
+      onKeyDown={editable ? (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
+      } : undefined}
+      style={{
+        color, fontSize, fontWeight, textAlign: "center",
+        fontFamily: proFont, lineHeight: 1.3, outline: "none",
+        caretColor: editable ? "currentColor" : undefined,
+        cursor: editable ? "text" : undefined,
+      }}
+    />
+  );
+}
 
 function InsertZone({ onClick }: { onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
@@ -100,7 +155,6 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     return () => window.removeEventListener("resize", h);
   }, []);
 
-  // Cleanup blur timer
   useEffect(() => {
     return () => { if (blurTimerRef.current) clearTimeout(blurTimerRef.current); };
   }, []);
@@ -114,10 +168,11 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
 
   const markDirty = () => { setDirty(true); dirtyRef.current = true; };
 
-  const updateLine = (field: 'original' | 'translation', lineIdx: number, text: string) => {
+  const updateLine = useCallback((field: 'original' | 'translation', lineIdx: number, text: string) => {
     setSlides(prev => {
+      const idx = i; // capture current slide index
       const updated = prev.map((sl, si) => {
-        if (si !== i) return sl;
+        if (si !== idx) return sl;
         const u = { ...sl, [field]: [...sl[field]] };
         u[field][lineIdx] = text;
         return u;
@@ -126,19 +181,20 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
       return updated;
     });
     markDirty();
-  };
+  }, [i]);
 
-  const addLine = (field: 'original' | 'translation', text: string) => {
+  const addLine = useCallback((field: 'original' | 'translation', text: string) => {
     setSlides(prev => {
+      const idx = i;
       const updated = prev.map((sl, si) => {
-        if (si !== i) return sl;
+        if (si !== idx) return sl;
         return { ...sl, [field]: [...sl[field], text] };
       });
       slidesRef.current = updated;
       return updated;
     });
     markDirty();
-  };
+  }, [i]);
 
   const deleteSlide = (idx: number) => {
     if (slides.length <= 1) return;
@@ -167,9 +223,12 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
-    setActiveField(null);
-    const fontSizes = { origPt: origPtRef.current, transPt: transPtRef.current };
-    onClose(dirtyRef.current ? slidesRef.current : undefined, fontSizes);
+    // Small delay to let blur handlers save text before reading refs
+    setTimeout(() => {
+      setActiveField(null);
+      const fontSizes = { origPt: origPtRef.current, transPt: transPtRef.current };
+      onClose(dirtyRef.current ? slidesRef.current : undefined, fontSizes);
+    }, 10);
   }, [onClose]);
 
   const handleDone = () => {
@@ -189,17 +248,28 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     setI(idx);
   }, []);
 
+  const handleFieldFocus = useCallback((field: 'original' | 'translation') => {
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+    setActiveField(field);
+  }, []);
+
+  const handleFieldBlur = useCallback(() => {
+    blurTimerRef.current = setTimeout(() => {
+      const active = document.activeElement;
+      if (!active || !active.closest('[data-edit-region]')) {
+        setActiveField(null);
+      }
+    }, 100);
+  }, []);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      // Let typing flow normally when editing (except Escape)
       if (isEditing && e.key !== "Escape") return;
       if (e.key === "Escape") {
         if (isEditing) {
-          // First press: exit edit mode
           e.preventDefault();
           handleDone();
         } else {
-          // Second press: close fullscreen
           handleClose();
         }
         return;
@@ -227,45 +297,12 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     }
   }, [slides.length, isEditing, goToSlide, i]);
 
-  const handleFieldFocus = (field: 'original' | 'translation') => {
-    if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
-    setActiveField(field);
-  };
-
-  const handleFieldBlur = (field: 'original' | 'translation', lineIdx: number, origText: string, e: React.FocusEvent<HTMLDivElement>) => {
-    const t = e.currentTarget.textContent || '';
-    if (t !== origText) updateLine(field, lineIdx, t);
-    // Delay clearing activeField so clicking between lines doesn't flicker the toolbar
-    blurTimerRef.current = setTimeout(() => {
-      const active = document.activeElement;
-      if (!active || !active.closest('[data-edit-region]')) {
-        setActiveField(null);
-      }
-    }, 100);
-  };
-
   const lineStyle = (color: string, fontSize: number, fontWeight: number): React.CSSProperties => ({
     color, fontSize, fontWeight, textAlign: "center",
     fontFamily: proFont, lineHeight: 1.3, outline: "none",
     caretColor: editable ? "currentColor" : undefined,
     cursor: editable ? "text" : undefined,
   });
-
-  const renderLine = (text: string, field: 'original' | 'translation', j: number, color: string, fontSize: number, fontWeight: number) => (
-    <div
-      key={`${i}-${field}-${j}`}
-      contentEditable={editable}
-      suppressContentEditableWarning
-      data-edit-region
-      onFocus={() => handleFieldFocus(field)}
-      onBlur={(e) => handleFieldBlur(field, j, text, e)}
-      onKeyDown={editable ? (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
-      } : undefined}
-      dangerouslySetInnerHTML={{ __html: escapeHtml(text) }}
-      style={lineStyle(color, fontSize, fontWeight)}
-    />
-  );
 
   const renderPlaceholder = (field: 'original' | 'translation', color: string, fontSize: number, fontWeight: number) => (
     <div
@@ -288,12 +325,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
           e.currentTarget.textContent = 'Text';
           e.currentTarget.style.opacity = '0.3';
         }
-        blurTimerRef.current = setTimeout(() => {
-          const active = document.activeElement;
-          if (!active || !active.closest('[data-edit-region]')) {
-            setActiveField(null);
-          }
-        }, 100);
+        handleFieldBlur();
       }}
       onKeyDown={e => {
         if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
@@ -336,7 +368,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     }}>
       <style>{spinnerCSS}</style>
 
-      {/* Top bar — simplified: slide counter + close */}
+      {/* Top bar */}
       <div style={{
         position: "absolute", top: mobile ? 12 : 20, left: mobile ? 12 : 20, right: mobile ? 12 : 20,
         display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 2,
@@ -347,7 +379,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         <button onClick={handleClose} style={pill()}><I.X s={15} /></button>
       </div>
 
-      {/* Floating edit toolbar — appears when editing */}
+      {/* Floating edit toolbar */}
       {isEditing && (
         <div style={{
           position: "absolute", top: mobile ? 54 : 66, left: 0, right: 0,
@@ -377,7 +409,6 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
           animation: "si .25s cubic-bezier(.16,1,.3,1)",
         }}
       >
-        {/* Desktop delete button — top-left on hover */}
         {!mobile && showDeleteBtn && slides.length > 1 && (
           <button onClick={() => deleteSlide(i)} style={{
             position: "absolute", top: 8, left: 8, zIndex: 4,
@@ -396,7 +427,21 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
           padding: `0 ${slideW * 0.031}px`,
         }}>
           {s.original.length > 0
-            ? s.original.map((l, j) => renderLine(l, 'original', j, "#fff", origFontPx, 700))
+            ? s.original.map((l, j) => (
+              <EditableLine
+                key={`${i}-original-${j}`}
+                text={l}
+                field="original"
+                lineIdx={j}
+                color="#fff"
+                fontSize={origFontPx}
+                fontWeight={700}
+                editable={editable}
+                onUpdate={updateLine}
+                onFieldFocus={handleFieldFocus}
+                onFieldBlur={handleFieldBlur}
+              />
+            ))
             : editable && renderPlaceholder('original', "#fff", origFontPx, 700)}
         </div>
         <div data-edit-region style={{
@@ -406,7 +451,21 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
           padding: `0 ${slideW * 0.031}px`,
         }}>
           {s.translation.length > 0
-            ? s.translation.map((l, j) => renderLine(l, 'translation', j, transColor, transFontPx, 400))
+            ? s.translation.map((l, j) => (
+              <EditableLine
+                key={`${i}-translation-${j}`}
+                text={l}
+                field="translation"
+                lineIdx={j}
+                color={transColor}
+                fontSize={transFontPx}
+                fontWeight={400}
+                editable={editable}
+                onUpdate={updateLine}
+                onFieldFocus={handleFieldFocus}
+                onFieldBlur={handleFieldBlur}
+              />
+            ))
             : editable && renderPlaceholder('translation', transColor, transFontPx, 400)}
         </div>
       </div>
@@ -426,7 +485,6 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         <div style={{ display: "flex", gap: mobile ? 5 : 6, flexWrap: "wrap", justifyContent: "center", maxWidth: mobile ? "70vw" : "auto", alignItems: "center" }}>
           {slides.map((_, j) => (
             <div key={j} style={{ display: "flex", alignItems: "center", gap: mobile ? 5 : 6 }}>
-              {/* InsertZone before first dot (desktop only) */}
               {j === 0 && !mobile && editable && <InsertZone onClick={() => insertSlide(-1)} />}
               <button onClick={() => goToSlide(j)} style={{
                 width: j === i ? (mobile ? 18 : 22) : (mobile ? 6 : 8),
@@ -434,7 +492,6 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
                 background: j === i ? T.primary : "rgba(255,255,255,0.2)",
                 border: "none", cursor: "pointer", transition: "all .2s ease", padding: 0,
               }} />
-              {/* InsertZone after each dot (desktop only) */}
               {!mobile && editable && <InsertZone onClick={() => insertSlide(j)} />}
             </div>
           ))}

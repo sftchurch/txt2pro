@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { I } from './Icons';
 import { Slide } from './Slide';
 import { T, fontMono, card, anim } from '../theme';
@@ -15,9 +16,56 @@ interface SongListProps {
   onExpand: (index: number | null) => void;
   onRemove: (index: number) => void;
   onFullscreen: (songIndex: number, slideIndex: number) => void;
+  onSlideInsert?: (songIndex: number, afterSlideIndex: number) => void;
+  onSlideDelete?: (songIndex: number, slideIndex: number) => void;
 }
 
-export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, serviceId, version, songFonts, onExpand, onRemove, onFullscreen }: SongListProps) {
+function SlideWithActions({ song, songIndex, slideIndex, mobile, songFonts, onFullscreen, onSlideDelete }: {
+  song: ClientSong;
+  songIndex: number;
+  slideIndex: number;
+  mobile: boolean;
+  songFonts?: Record<number, { origPt: number; transPt: number }>;
+  onFullscreen: (songIndex: number, slideIndex: number) => void;
+  onSlideDelete?: (songIndex: number, slideIndex: number) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const canDelete = onSlideDelete && song.slides.length > 1;
+
+  return (
+    <div
+      style={{ position: "relative" }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div style={{ position: "absolute", top: 4, left: 6, fontSize: 7.5, fontWeight: 700, fontFamily: fontMono, color: "rgba(255,255,255,0.3)", zIndex: 1 }}>{slideIndex + 1}</div>
+      {/* Delete button — appears on hover (desktop) or always visible (mobile) */}
+      {canDelete && (hovered || mobile) && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onSlideDelete(songIndex, slideIndex); }}
+          style={{
+            position: "absolute", top: 3, right: 3, zIndex: 2,
+            width: mobile ? 20 : 18, height: mobile ? 20 : 18, borderRadius: "50%",
+            background: "rgba(255,60,60,0.85)", border: "none",
+            color: "#fff", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 0, animation: "fi .1s ease",
+          }}
+        ><I.X s={mobile ? 10 : 9} /></button>
+      )}
+      <Slide
+        slide={song.slides[slideIndex]}
+        small
+        mobile={mobile}
+        onClick={() => onFullscreen(songIndex, slideIndex)}
+        origPt={songFonts?.[songIndex]?.origPt}
+        transPt={songFonts?.[songIndex]?.transPt}
+      />
+    </div>
+  );
+}
+
+export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, serviceId, version, songFonts, onExpand, onRemove, onFullscreen, onSlideInsert, onSlideDelete }: SongListProps) {
   const canDownload = serviceId && version > 0;
 
   return (
@@ -77,13 +125,38 @@ export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, servi
 
             {exp === i && (
               <div style={{ padding: mob ? "10px 10px" : "14px 14px", background: T.bgSubtle, borderBottom: i < songs.length - 1 ? `1px solid ${T.borderLight}` : "none", animation: "sd .15s cubic-bezier(.16,1,.3,1)" }}>
-                <div style={{ display: "flex", gap: mob ? 8 : 10, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
-                  {song.slides.map((sl, si) => (
-                    <div key={si} style={{ position: "relative" }}>
-                      <div style={{ position: "absolute", top: 4, left: 6, fontSize: 7.5, fontWeight: 700, fontFamily: fontMono, color: "rgba(255,255,255,0.3)", zIndex: 1 }}>{si + 1}</div>
-                      <Slide slide={sl} small mobile={mob} onClick={() => onFullscreen(i, si)} origPt={songFonts?.[i]?.origPt} transPt={songFonts?.[i]?.transPt} />
-                    </div>
+                <div style={{ display: "flex", gap: mob ? 8 : 10, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch", alignItems: "center" }}>
+                  {song.slides.map((_, si) => (
+                    <SlideWithActions
+                      key={si}
+                      song={song}
+                      songIndex={i}
+                      slideIndex={si}
+                      mobile={mob}
+                      songFonts={songFonts}
+                      onFullscreen={onFullscreen}
+                      onSlideDelete={onSlideDelete}
+                    />
                   ))}
+                  {/* Add slide button */}
+                  {onSlideInsert && (
+                    <button
+                      onClick={() => onSlideInsert(i, song.slides.length - 1)}
+                      style={{
+                        width: mob ? 152 : 184, height: mob ? 85 : 103, borderRadius: mob ? 8 : 10,
+                        background: "transparent",
+                        border: `2px dashed ${T.border}`,
+                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                        gap: 4, color: T.textMuted, cursor: "pointer", flexShrink: 0,
+                        transition: "border-color .2s ease",
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = T.primary; e.currentTarget.style.color = T.primary; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}
+                    >
+                      <I.Plus s={16} />
+                      <span style={{ fontSize: 10, fontWeight: 600 }}>Add slide</span>
+                    </button>
+                  )}
                   {song.count > song.slides.length && (
                     <div style={{
                       width: mob ? 152 : 184, height: mob ? 85 : 103, borderRadius: mob ? 8 : 10,
