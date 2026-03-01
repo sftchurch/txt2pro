@@ -1,0 +1,22 @@
+{
+  "name": "txt2pro",
+  "version": "1.0.0",
+  "description": "Convert church worship lyrics (.txt/.rtf) into ProPresenter 7 .pro files",
+  "type": "module",
+  "scripts": {
+    "test:parser": "tsx tests/test-parser.ts",
+    "test:e2e": "tsx tests/test-e2e.ts",
+    "test": "tsx tests/test-parser.ts && tsx tests/test-e2e.ts",
+    "proto:build": "pbjs -t static-module --keep-case --es6 -w es6 -p \"./proto/Proto 19beta\" -o src/lib/proto-static.js \"proto/Proto 19beta/presentation.proto\""
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "protobufjs": "^7.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "protobufjs-cli": "^2.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

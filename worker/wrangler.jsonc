@@ -1,0 +1,20 @@
+{
+  "name": "txt2pro",
+  "account_id": "59bcb20b29ce51fadf44b0b7c3ead225",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "txt2pro"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "txt2pro",
+      "database_id": "87eb33fc-31fb-43d0-a41b-9eb47001f269"
+    }
+  ]
+}
