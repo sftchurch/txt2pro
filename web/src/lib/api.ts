@@ -1,4 +1,4 @@
-import type { Service, PublishResult, ServiceDetail } from './types';
+import type { Service, PublishResult, ServiceDetail, CalendarEvent } from './types';
 
 const BASE = import.meta.env.VITE_API_URL as string;
 
@@ -18,7 +18,7 @@ export async function fetchService(id: string): Promise<ServiceDetail> {
 export async function publishService(
   title: string,
   date: string,
-  songs: { title: string; filename: string; file: File | null; slides: { original: string[]; translation: string[] }[] }[],
+  songs: { title: string; filename: string; file: File | null; slides: { original: string[]; translation: string[]; origPt?: number; transPt?: number }[] }[],
   note: string,
 ): Promise<PublishResult> {
   const fd = new FormData();
@@ -30,7 +30,12 @@ export async function publishService(
   const slidesJson = songs.map(s => ({
     title: s.title,
     filename: s.filename,
-    slides: s.slides.map(sl => ({ original: sl.original, translation: sl.translation })),
+    slides: s.slides.map(sl => ({
+      original: sl.original,
+      translation: sl.translation,
+      ...(sl.origPt ? { origPt: sl.origPt } : {}),
+      ...(sl.transPt ? { transPt: sl.transPt } : {}),
+    })),
   }));
   fd.append('slides_json', JSON.stringify(slidesJson));
 
@@ -66,6 +71,21 @@ export async function createService(title: string, date: string): Promise<{ id: 
     throw new Error(err.error);
   }
   return res.json();
+}
+
+export async function deleteService(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/services/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Failed to delete service' }));
+    throw new Error(err.error);
+  }
+}
+
+export async function fetchCalendar(): Promise<CalendarEvent[]> {
+  const res = await fetch(`${BASE}/api/calendar`);
+  if (!res.ok) throw new Error('Failed to fetch calendar');
+  const data = await res.json();
+  return data.events;
 }
 
 export async function fetchLyrics(id: string, version: number) {

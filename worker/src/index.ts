@@ -5,6 +5,7 @@ import { createProBundle } from '../../src/lib/bundle.js';
 interface Env {
   BUCKET: R2Bucket;
   DB: D1Database;
+  ICAL_URL: string;
 }
 
 type Handler = (request: Request, env: Env, params: Record<string, string>) => Promise<Response>;
@@ -83,7 +84,7 @@ route('POST', '/api/services', async (request, env) => {
     const structured = JSON.parse(slidesJson) as {
       title: string;
       filename: string;
-      slides: { original: string[]; translation: string[] }[];
+      slides: { original: string[]; translation: string[]; origPt?: number; transPt?: number }[];
     }[];
     parsedSongs = structured.map(s => ({
       title: s.title,
@@ -92,6 +93,8 @@ route('POST', '/api/services', async (request, env) => {
         label: `Slide ${i + 1}`,
         originalLines: sl.original,
         translationLines: sl.translation,
+        origPt: sl.origPt,
+        transPt: sl.transPt,
       })),
       warnings: [],
     }));
@@ -119,6 +122,8 @@ route('POST', '/api/services', async (request, env) => {
       label: s.label,
       original: s.originalLines,
       translation: s.translationLines,
+      ...(s.origPt ? { origPt: s.origPt } : {}),
+      ...(s.transPt ? { transPt: s.transPt } : {}),
     })),
   }));
 
@@ -227,6 +232,37 @@ route('GET', '/api/services', async (_request, env) => {
   return json({ services: results });
 });
 
+// DELETE /api/services/:id — Delete a service and all its data
+route('DELETE', '/api/services/:id', async (_request, env, params) => {
+  const service = await env.DB.prepare(
+    'SELECT id, current_version FROM services WHERE id = ?'
+  ).bind(params.id).first<{ id: string; current_version: number }>();
+
+  if (!service) return errorResponse('Service not found', 404);
+
+  // Delete all R2 objects for this service
+  const prefix = `services/${params.id}/`;
+  let cursor: string | undefined;
+  do {
+    const listed = await env.BUCKET.list({ prefix, cursor });
+    if (listed.objects.length > 0) {
+      await Promise.all(listed.objects.map(obj => env.BUCKET.delete(obj.key)));
+    }
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
+
+  // Delete from DB (songs → versions → services)
+  await env.DB.batch([
+    env.DB.prepare(
+      'DELETE FROM songs WHERE version_id IN (SELECT id FROM versions WHERE service_id = ?)'
+    ).bind(params.id),
+    env.DB.prepare('DELETE FROM versions WHERE service_id = ?').bind(params.id),
+    env.DB.prepare('DELETE FROM services WHERE id = ?').bind(params.id),
+  ]);
+
+  return json({ ok: true });
+});
+
 // GET /api/services/:id — Service manifest with all versions
 route('GET', '/api/services/:id', async (_request, env, params) => {
   const service = await env.DB.prepare(
@@ -333,6 +369,62 @@ route('GET', '/api/services/:id/latest/download', async (_request, env, params) 
   });
 });
 
+// GET /api/calendar — Proxy ICS feed and return parsed events
+route('GET', '/api/calendar', async (_request, env) => {
+  if (!env.ICAL_URL) return errorResponse('ICAL_URL not configured', 500);
+
+  const res = await fetch(env.ICAL_URL);
+  if (!res.ok) return errorResponse('Failed to fetch calendar', 502);
+
+  const ics = await res.text();
+  const blocks = ics.split('BEGIN:VEVENT');
+  blocks.shift(); // discard preamble
+
+  const events: { date: string; title: string; time: string }[] = [];
+
+  for (const block of blocks) {
+    const raw = block.split('END:VEVENT')[0];
+    // Unfold ICS continuation lines (RFC 5545 §3.1)
+    const unfolded = raw.replace(/\r?\n[ \t]/g, '');
+
+    let dtstart = '';
+    let summary = '';
+
+    for (const line of unfolded.split(/\r?\n/)) {
+      if (line.startsWith('DTSTART')) {
+        dtstart = line.substring(line.indexOf(':') + 1);
+      } else if (line.startsWith('SUMMARY')) {
+        summary = line.substring(line.indexOf(':') + 1);
+      }
+      if (dtstart && summary) break;
+    }
+
+    if (!dtstart || !summary) continue;
+
+    const toDate = (s: string) => `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+    let date: string;
+    let time: string;
+
+    if (dtstart.length === 8) {
+      date = toDate(dtstart);
+      time = 'All day';
+    } else {
+      // Timed: YYYYMMDDTHHMMSS or YYYYMMDDTHHMMSSZ
+      date = toDate(dtstart);
+      const hh = parseInt(dtstart.slice(9, 11), 10);
+      const mm = dtstart.slice(11, 13);
+      const ampm = hh >= 12 ? 'PM' : 'AM';
+      const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh;
+      time = `${h12}:${mm} ${ampm}`;
+    }
+
+    events.push({ date, title: summary, time });
+  }
+
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  return json({ events });
+});
+
 // GET /api/sync/check — Sync polling (returns latest checksum per service)
 route('GET', '/api/sync/check', async (request, env) => {
   const url = new URL(request.url);
@@ -363,7 +455,7 @@ route('GET', '/api/sync/check', async (request, env) => {
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 

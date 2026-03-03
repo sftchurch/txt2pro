@@ -142,7 +142,7 @@ function makeSlideElement(
           enable: true,
         },
         rtf_data: rtfData,
-        vertical_alignment: 1, // MIDDLE
+        vertical_alignment: 0, // TOP
         scale_behavior: 0, // NONE
         margins: { left: 0, right: 0, top: 0, bottom: 0 },
         is_superscript_standardized: true,
@@ -202,8 +202,12 @@ export function generatePresentation(
       const originalText = slide.originalLines.join('\n');
       const translationText = slide.translationLines.join('\n');
 
-      const originalRtf = buildRtf(originalText, template.original);
-      const translationRtf = buildRtf(translationText, template.translation);
+      // Use per-slide font sizes if available, otherwise use template defaults
+      const origStyle = slide.origPt ? { ...template.original, fontSize: slide.origPt } : template.original;
+      const transStyle = slide.transPt ? { ...template.translation, fontSize: slide.transPt } : template.translation;
+
+      const originalRtf = buildRtf(originalText, origStyle);
+      const translationRtf = buildRtf(translationText, transStyle);
 
       // Build slide elements — Translated first, then Main (matching template order)
       const elements: Record<string, unknown>[] = [];
@@ -216,7 +220,7 @@ export function generatePresentation(
         LAYOUT.translation.width,
         LAYOUT.translation.height,
         translationRtf,
-        template.translation,
+        transStyle,
       ));
 
       // Original/Main element second (element 1)
@@ -227,7 +231,7 @@ export function generatePresentation(
         LAYOUT.original.width,
         LAYOUT.original.height,
         originalRtf,
-        template.original,
+        origStyle,
       ));
 
       const cue: Record<string, unknown> = {

@@ -10,6 +10,9 @@
       "bucket_name": "txt2pro"
     }
   ],
+  "vars": {
+    "ICAL_URL": "https://calendar.planningcenteronline.com/icals/REDACTED"
+  },
   "d1_databases": [
     {
       "binding": "DB",

@@ -12,6 +12,8 @@ export interface Service {
 export interface ClientSlide {
   original: string[];
   translation: string[];
+  origPt?: number;
+  transPt?: number;
 }
 
 export interface ClientSong {
@@ -22,6 +24,7 @@ export interface ClientSong {
   warn: string | null;
   count: number;
   slides: ClientSlide[];
+  section?: string;
 }
 
 export interface PublishResult {
@@ -41,6 +44,12 @@ export interface VersionInfo {
   note: string;
   published_at: string;
   songs: { filename: string; title: string; slide_count: number; sort_order: number }[];
+}
+
+export interface CalendarEvent {
+  date: string;    // YYYY-MM-DD
+  title: string;   // e.g. "Communion Service"
+  time: string;    // e.g. "7:00 PM" or "All day"
 }
 
 export interface ServiceDetail {

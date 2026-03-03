@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWidth } from './hooks/useWidth';
 import { useDarkMode } from './hooks/useDarkMode';
 import { T, applyScheme, pageBase, container, globalCSS } from './theme';
@@ -16,11 +16,6 @@ import type { Service, ClientSong, ClientSlide, PublishResult } from './lib/type
 
 type View = 'services' | 'editor';
 
-interface FontSizes {
-  origPt: number;
-  transPt: number;
-}
-
 interface FsState {
   slides: ClientSlide[];
   start: number;
@@ -37,17 +32,25 @@ function slidesToFile(slides: ClientSlide[], filename: string): File {
   return new File([text], filename, { type: 'text/plain' });
 }
 
-// Convert lyrics API data into ClientSong[] for display (read-only, no File object)
-function lyricsToSongs(lyrics: { title: string; filename: string; slides: { original: string[]; translation: string[] }[] }[]): ClientSong[] {
-  return lyrics.map(song => ({
-    title: song.title,
-    filename: song.filename,
-    file: null as unknown as File, // no file for previously published songs
-    ok: true,
-    warn: null,
-    count: song.slides.length,
-    slides: song.slides.map(s => ({ original: s.original, translation: s.translation })),
-  }));
+// Convert lyrics API data into ClientSong[] for display
+function lyricsToSongs(lyrics: { title: string; filename: string; slides: { original: string[]; translation: string[]; origPt?: number; transPt?: number }[] }[]): ClientSong[] {
+  return lyrics.map(song => {
+    const slides = song.slides.map(s => ({
+      original: s.original,
+      translation: s.translation,
+      ...(s.origPt ? { origPt: s.origPt } : {}),
+      ...(s.transPt ? { transPt: s.transPt } : {}),
+    }));
+    return {
+      title: song.title,
+      filename: song.filename,
+      file: slidesToFile(slides, song.filename),
+      ok: true,
+      warn: null,
+      count: song.slides.length,
+      slides,
+    };
+  });
 }
 
 // Parse service ID from URL path like /service/:id
@@ -74,7 +77,43 @@ export default function App() {
   const [showHist, setShowHist] = useState(false);
   const [fade, setFade] = useState(true);
   const [loadingSongs, setLoadingSongs] = useState(!!initialServiceId);
-  const [songFonts, setSongFonts] = useState<Record<number, FontSizes>>({});
+  const [loadingVersion, setLoadingVersion] = useState<number | null>(null);
+  const [previewVersion, setPreviewVersion] = useState<number | null>(null);
+  const savedSongsRef = useRef<ClientSong[] | null>(null);
+
+  const handlePreviewVersion = async (version: number) => {
+    if (!svc) return;
+    // Save current songs on first preview
+    if (!savedSongsRef.current) savedSongsRef.current = songs;
+    setLoadingVersion(version);
+    try {
+      const lyrics = await fetchLyrics(svc.id, version);
+      setSongs(lyricsToSongs(lyrics));
+      setPreviewVersion(version);
+      setExp(null);
+    } catch (err) {
+      console.error('Failed to load version:', err);
+    } finally {
+      setLoadingVersion(null);
+    }
+  };
+
+  const handleRestoreVersion = () => {
+    // Commit the previewed songs as the working set
+    savedSongsRef.current = null;
+    setPreviewVersion(null);
+    setPublished(null);
+  };
+
+  const handleCancelPreview = () => {
+    // Go back to original songs
+    if (savedSongsRef.current) {
+      setSongs(savedSongsRef.current);
+      savedSongsRef.current = null;
+    }
+    setPreviewVersion(null);
+    setExp(null);
+  };
 
   const go = (cb: () => void) => {
     setFade(false);
@@ -106,7 +145,8 @@ export default function App() {
 
   // Load existing songs when entering a published service
   useEffect(() => {
-    if (view !== 'editor' || !svc || svc.current_version === 0) return;
+    if (view !== 'editor' || !svc) return;
+    if (svc.current_version === 0) { setLoadingSongs(false); return; }
     setLoadingSongs(true);
     fetchLyrics(svc.id, svc.current_version)
       .then(lyrics => setSongs(lyricsToSongs(lyrics)))
@@ -184,7 +224,15 @@ export default function App() {
         />
 
         {showHist && svc && (
-          <VersionHistory serviceId={svc.id} mobile={mob} />
+          <VersionHistory
+            serviceId={svc.id}
+            mobile={mob}
+            previewVersion={previewVersion}
+            loadingVersion={loadingVersion}
+            onPreview={handlePreviewVersion}
+            onRestore={handleRestoreVersion}
+            onCancelPreview={handleCancelPreview}
+          />
         )}
 
         {published && (
@@ -213,9 +261,32 @@ export default function App() {
             fade={fade}
             serviceId={svc?.id ?? null}
             version={published ? published.version : (svc?.current_version ?? 0)}
-            songFonts={songFonts}
             onExpand={setExp}
             onRemove={i => setSongs(songs.filter((_, j) => j !== i))}
+            onMove={(from, to) => {
+              if (to < 0 || to >= songs.length) return;
+              setSongs(prev => {
+                const updated = [...prev];
+                const [moved] = updated.splice(from, 1);
+                updated.splice(to, 0, moved);
+                // Update section to match new neighbors
+                const above = to > 0 ? updated[to - 1] : null;
+                const below = to < updated.length - 1 ? updated[to + 1] : null;
+                const neighborSection = above ? above.section : (below ? below.section : undefined);
+                updated[to] = { ...updated[to], section: neighborSection };
+                return updated;
+              });
+              // Keep expanded song tracking the moved song
+              if (exp === from) setExp(to);
+              else if (exp !== null) {
+                if (from < exp && to >= exp) setExp(exp - 1);
+                else if (from > exp && to <= exp) setExp(exp + 1);
+              }
+              setPublished(null);
+            }}
+            onSectionChange={(songIdx, section) => {
+              setSongs(prev => prev.map((song, i) => i === songIdx ? { ...song, section: section || undefined } : song));
+            }}
             onFullscreen={(songIdx, slideIdx) => setFs({ slides: songs[songIdx].slides, start: slideIdx, songIndex: songIdx })}
             onSlideInsert={(songIdx, afterSlideIdx) => {
               setSongs(prev => prev.map((song, si) => {
@@ -237,7 +308,7 @@ export default function App() {
           />
         )}
 
-        {songs.length > 0 && !published && songs.some(s => s.file) && (
+        {songs.length > 0 && !published && !previewVersion && songs.some(s => s.file) && (
           <PublishBar
             songs={songs}
             mobile={mob}
@@ -266,12 +337,7 @@ export default function App() {
           slides={fs.slides}
           start={fs.start}
           editable={fs.songIndex !== undefined}
-          initialOrigPt={fs.songIndex !== undefined ? songFonts[fs.songIndex]?.origPt : undefined}
-          initialTransPt={fs.songIndex !== undefined ? songFonts[fs.songIndex]?.transPt : undefined}
-          onClose={(editedSlides, fontSizes) => {
-            if (fs.songIndex !== undefined && fontSizes) {
-              setSongFonts(prev => ({ ...prev, [fs.songIndex!]: fontSizes }));
-            }
+          onClose={(editedSlides) => {
             if (editedSlides && fs.songIndex !== undefined) {
               setSongs(prev => prev.map((song, idx) => {
                 if (idx !== fs.songIndex) return song;

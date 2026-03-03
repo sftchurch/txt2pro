@@ -26,18 +26,18 @@ export const DEFAULT_TEMPLATE: SlideTemplate = {
 // Element positioning constants for a 1920x1080 slide
 // Matches the template.pro layout from ProPresenter
 export const LAYOUT = {
-  // "Main" text element (original/Cyrillic) — extends above slide
+  // "Main" text element (original/Cyrillic) — upper portion, top-aligned
   original: {
-    x: 0,
-    y: -180,
+    x: -1.1118169002828873e-13, // ~0
+    y: 51.40509825833192,
     width: 1919.9999999999998,
-    height: 750,
+    height: 401.23253045558477,
   },
-  // "Translated" text element (English translation) — lower portion
+  // "Translated" text element (English translation) — lower portion, top-aligned
   translation: {
-    x: 2.2737367544323206e-13, // ~0
-    y: 270,
+    x: -6.900531164571532e-14, // ~0
+    y: 452.63762871391714,
     width: 1919.9999999999998,
-    height: 600,
+    height: 627.3623712860826,
   },
 };

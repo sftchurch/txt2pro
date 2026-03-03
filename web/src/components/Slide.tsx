@@ -4,14 +4,14 @@ import type { ClientSlide } from '../lib/types';
 const proFont = `'Linux Biolinum', 'Linux Libertine', Georgia, serif`;
 const transColor = "rgb(231, 142, 36)";
 
-// Match ProPresenter template.pro layout exactly
-// Original ("Main") box: y=-180, height=750 on a 1080px slide
-// Translation ("Translated") box: y=270, height=600 on a 1080px slide
-// Both vertically centered within their bounding box
-const origTop = (-180 / 1080) * 100;     // -16.67%
-const origHeight = (750 / 1080) * 100;   // 69.44%
-const transTop = (270 / 1080) * 100;     // 25%
-const transHeight = (600 / 1080) * 100;  // 55.56%
+// Match ProPresenter new-template.pro layout exactly
+// Original ("Main") box: y=51.405, height=401.233 on a 1080px slide
+// Translation ("Translated") box: y=452.638, height=627.362 on a 1080px slide
+// Both top-aligned within their bounding box
+const origTop = (51.405 / 1080) * 100;     // 4.76%
+const origHeight = (401.233 / 1080) * 100; // 37.15%
+const transTop = (452.638 / 1080) * 100;   // 41.91%
+const transHeight = (627.362 / 1080) * 100; // 58.09%
 
 // Default font size as fraction of slide height (pt / slide height)
 const defaultOrigRatio = 120 / 1080;
@@ -29,8 +29,19 @@ interface SlideProps {
 export function Slide({ slide, small, mobile, onClick, origPt, transPt }: SlideProps) {
   const w = mobile ? 152 : small ? 184 : 320;
   const h = mobile ? 85 : small ? 103 : 180;
-  const origSize = Math.max(5, h * (origPt ? origPt / 1080 : defaultOrigRatio));
-  const transSize = Math.max(4.5, h * (transPt ? transPt / 1080 : defaultTransRatio));
+  const scale = small ? 0.75 : 1;
+  const origBoxH = h * origHeight / 100;
+  const transBoxH = h * transHeight / 100;
+  const origLines = Math.max(slide.original.length, 1);
+  const transLines = Math.max(slide.translation.length, 1);
+  const origSize = Math.min(
+    Math.max(5, h * (origPt ? origPt / 1080 : defaultOrigRatio) * scale),
+    origBoxH / (origLines * 1.35),
+  );
+  const transSize = Math.min(
+    Math.max(4.5, h * (transPt ? transPt / 1080 : defaultTransRatio) * scale),
+    transBoxH / (transLines * 1.35),
+  );
   const pad = mobile ? 4 : small ? 6 : 10;
 
   return (
@@ -45,8 +56,8 @@ export function Slide({ slide, small, mobile, onClick, origPt, transPt }: SlideP
       <div style={{
         position: "absolute", left: 0, right: 0,
         top: `${origTop}%`, height: `${origHeight}%`,
-        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-        padding: `0 ${pad}px`,
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start",
+        padding: `0 ${pad}px`, overflow: "hidden",
       }}>
         {slide.original.map((l, i) => <div key={i} style={{
           color: "#fff", fontSize: origSize, fontWeight: 700, textAlign: "center",
@@ -56,8 +67,8 @@ export function Slide({ slide, small, mobile, onClick, origPt, transPt }: SlideP
       <div style={{
         position: "absolute", left: 0, right: 0,
         top: `${transTop}%`, height: `${transHeight}%`,
-        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-        padding: `0 ${pad}px`,
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start",
+        padding: `0 ${pad}px`, overflow: "hidden",
       }}>
         {slide.translation.map((l, i) => <div key={i} style={{
           color: transColor, fontSize: transSize, fontWeight: 400, textAlign: "center",

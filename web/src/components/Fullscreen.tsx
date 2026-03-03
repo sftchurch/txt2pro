@@ -6,10 +6,10 @@ import type { ClientSlide } from '../lib/types';
 const proFont = `'Linux Biolinum', 'Linux Libertine', Georgia, serif`;
 const transColor = "rgb(231, 142, 36)";
 
-const origTop = (-180 / 1080) * 100;
-const origHeight = (750 / 1080) * 100;
-const transTop = (270 / 1080) * 100;
-const transHeight = (600 / 1080) * 100;
+const origTop = (51.405 / 1080) * 100;
+const origHeight = (401.233 / 1080) * 100;
+const transTop = (452.638 / 1080) * 100;
+const transHeight = (627.362 / 1080) * 100;
 
 const pill = (active?: boolean): React.CSSProperties => ({
   width: 36, height: 36, borderRadius: "50%",
@@ -34,7 +34,7 @@ const spinnerCSS = `
 `;
 
 /** Ref-based contentEditable line — avoids React overwriting user edits */
-function EditableLine({ text, field, lineIdx, color, fontSize, fontWeight, editable, onUpdate, onFieldFocus, onFieldBlur }: {
+function EditableLine({ text, field, lineIdx, color, fontSize, fontWeight, editable, onUpdate, onInsertLine, onFieldFocus, onFieldBlur }: {
   text: string;
   field: 'original' | 'translation';
   lineIdx: number;
@@ -43,6 +43,7 @@ function EditableLine({ text, field, lineIdx, color, fontSize, fontWeight, edita
   fontWeight: number;
   editable?: boolean;
   onUpdate: (field: 'original' | 'translation', lineIdx: number, text: string) => void;
+  onInsertLine?: (field: 'original' | 'translation', afterLineIdx: number) => void;
   onFieldFocus: (field: 'original' | 'translation') => void;
   onFieldBlur: () => void;
 }) {
@@ -70,6 +71,8 @@ function EditableLine({ text, field, lineIdx, color, fontSize, fontWeight, edita
       contentEditable={editable}
       suppressContentEditableWarning
       data-edit-region
+      data-field={field}
+      data-line-idx={lineIdx}
       onFocus={() => onFieldFocus(field)}
       onInput={() => {
         if (ref.current) localText.current = ref.current.textContent || '';
@@ -80,7 +83,16 @@ function EditableLine({ text, field, lineIdx, color, fontSize, fontWeight, edita
         onFieldBlur();
       }}
       onKeyDown={editable ? (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
+        if (e.key === 'Enter' && e.shiftKey) {
+          e.preventDefault();
+          // Save current text then insert new line after this one
+          const t = localText.current;
+          if (t !== text) onUpdate(field, lineIdx, t);
+          onInsertLine?.(field, lineIdx);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.target as HTMLElement).blur();
+        }
       } : undefined}
       style={{
         color, fontSize, fontWeight, textAlign: "center",
@@ -116,24 +128,25 @@ function InsertZone({ onClick }: { onClick: () => void }) {
 interface FullscreenProps {
   slides: ClientSlide[];
   start: number;
-  onClose: (editedSlides?: ClientSlide[], fontSizes?: { origPt: number; transPt: number }) => void;
+  onClose: (editedSlides?: ClientSlide[]) => void;
   mobile: boolean;
   editable?: boolean;
-  initialOrigPt?: number;
-  initialTransPt?: number;
 }
 
-export function Fullscreen({ slides: initialSlides, start, onClose, mobile, editable, initialOrigPt = 120, initialTransPt = 100 }: FullscreenProps) {
+export function Fullscreen({ slides: initialSlides, start, onClose, mobile, editable }: FullscreenProps) {
   const [i, setI] = useState(start);
   const [activeField, setActiveField] = useState<'original' | 'translation' | null>(null);
-  const [origPt, setOrigPt] = useState(initialOrigPt);
-  const [transPt, setTransPt] = useState(initialTransPt);
   const [slides, setSlides] = useState(() => initialSlides.map(s => ({
     original: [...s.original],
     translation: [...s.translation],
+    origPt: s.origPt ?? 120,
+    transPt: s.transPt ?? 100,
   })));
   const [dirty, setDirty] = useState(false);
   const [showDeleteBtn, setShowDeleteBtn] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [dragSlideIdx, setDragSlideIdx] = useState<number | null>(null);
+  const [dropSlideIdx, setDropSlideIdx] = useState<number | null>(null);
   const touchRef = useRef({ startX: 0, startY: 0 });
   const [vw, setVw] = useState(window.innerWidth);
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -143,11 +156,6 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   // Refs for synchronous access in handleClose
   const slidesRef = useRef(slides);
   const dirtyRef = useRef(dirty);
-  const origPtRef = useRef(origPt);
-  const transPtRef = useRef(transPt);
-
-  const setOrigPtSync = (v: number) => { setOrigPt(v); origPtRef.current = v; };
-  const setTransPtSync = (v: number) => { setTransPt(v); transPtRef.current = v; };
 
   useEffect(() => {
     const h = () => setVw(window.innerWidth);
@@ -160,11 +168,19 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   }, []);
 
   const s = slides[i];
+  const origPt = s.origPt;
+  const transPt = s.transPt;
 
   const slideW = mobile ? vw - 24 : Math.min(vw * 0.82, 960);
   const slideH = slideW * 9 / 16;
-  const origFontPx = slideH * (origPt / 1080);
-  const transFontPx = slideH * (transPt / 1080);
+
+  // Clamp font size so text fits within its container
+  const origBoxH = slideH * origHeight / 100;
+  const transBoxH = slideH * transHeight / 100;
+  const origLines = Math.max(s.original.length, 1);
+  const transLines = Math.max(s.translation.length, 1);
+  const origFontPx = Math.min(slideH * (origPt / 1080) * 0.9, origBoxH / (origLines * 1.35));
+  const transFontPx = Math.min(slideH * (transPt / 1080) * 0.9, transBoxH / (transLines * 1.35));
 
   const markDirty = () => { setDirty(true); dirtyRef.current = true; };
 
@@ -196,6 +212,26 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     markDirty();
   }, [i]);
 
+  const insertLineAfter = useCallback((field: 'original' | 'translation', afterLineIdx: number) => {
+    setSlides(prev => {
+      const idx = i;
+      const updated = prev.map((sl, si) => {
+        if (si !== idx) return sl;
+        const lines = [...sl[field]];
+        lines.splice(afterLineIdx + 1, 0, '');
+        return { ...sl, [field]: lines };
+      });
+      slidesRef.current = updated;
+      return updated;
+    });
+    markDirty();
+    // Focus the new line after React re-renders
+    setTimeout(() => {
+      const el = document.querySelector(`[data-field="${field}"][data-line-idx="${afterLineIdx + 1}"]`) as HTMLElement | null;
+      el?.focus();
+    }, 30);
+  }, [i]);
+
   const deleteSlide = (idx: number) => {
     if (slides.length <= 1) return;
     setSlides(prev => {
@@ -209,7 +245,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
 
   const insertSlide = (afterIdx: number) => {
     setSlides(prev => {
-      const empty: ClientSlide = { original: [], translation: [] };
+      const empty = { original: [] as string[], translation: [] as string[], origPt: 120, transPt: 100 };
       const updated = [...prev.slice(0, afterIdx + 1), empty, ...prev.slice(afterIdx + 1)];
       slidesRef.current = updated;
       return updated;
@@ -219,6 +255,32 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     markDirty();
   };
 
+  const reorderSlide = (from: number, to: number) => {
+    if (from === to) return;
+    setSlides(prev => {
+      const updated = [...prev];
+      const [moved] = updated.splice(from, 1);
+      updated.splice(to, 0, moved);
+      slidesRef.current = updated;
+      return updated;
+    });
+    // Adjust current slide index to follow the viewed slide
+    if (from === i) {
+      setI(to);
+    } else if (from < i && to >= i) {
+      setI(i - 1);
+    } else if (from > i && to <= i) {
+      setI(i + 1);
+    }
+    markDirty();
+  };
+
+  const moveSlide = (dir: -1 | 1) => {
+    const to = i + dir;
+    if (to < 0 || to >= slides.length) return;
+    reorderSlide(i, to);
+  };
+
   const handleClose = useCallback(() => {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
@@ -226,8 +288,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     // Small delay to let blur handlers save text before reading refs
     setTimeout(() => {
       setActiveField(null);
-      const fontSizes = { origPt: origPtRef.current, transPt: transPtRef.current };
-      onClose(dirtyRef.current ? slidesRef.current : undefined, fontSizes);
+      onClose(dirtyRef.current ? slidesRef.current : undefined);
     }, 10);
   }, [onClose]);
 
@@ -245,6 +306,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     }
     if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
     setActiveField(null);
+    setConfirmDelete(false);
     setI(idx);
   }, []);
 
@@ -256,7 +318,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   const handleFieldBlur = useCallback(() => {
     blurTimerRef.current = setTimeout(() => {
       const active = document.activeElement;
-      if (!active || !active.closest('[data-edit-region]')) {
+      if (!active || (!active.closest('[data-edit-region]') && !active.closest('[data-edit-toolbar]'))) {
         setActiveField(null);
       }
     }, 100);
@@ -336,6 +398,24 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
 
   const clampPt = (v: number) => Math.max(20, Math.min(300, Math.round(v)));
 
+  const setOrigPt = (v: number) => {
+    setSlides(prev => {
+      const updated = prev.map((sl, si) => si !== i ? sl : { ...sl, origPt: v });
+      slidesRef.current = updated;
+      return updated;
+    });
+    markDirty();
+  };
+
+  const setTransPt = (v: number) => {
+    setSlides(prev => {
+      const updated = prev.map((sl, si) => si !== i ? sl : { ...sl, transPt: v });
+      slidesRef.current = updated;
+      return updated;
+    });
+    markDirty();
+  };
+
   const sizeControl = (label: string, value: number, set: (v: number) => void) => (
     <div style={{
       display: "flex", alignItems: "center", gap: 1, background: "rgba(255,255,255,0.06)",
@@ -381,13 +461,13 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
 
       {/* Floating edit toolbar */}
       {isEditing && (
-        <div style={{
+        <div data-edit-toolbar style={{
           position: "absolute", top: mobile ? 54 : 66, left: 0, right: 0,
           display: "flex", alignItems: "center", justifyContent: "center", gap: 8, zIndex: 3,
           animation: "fi .15s ease",
         }}>
-          {sizeControl("Main", origPt, setOrigPtSync)}
-          {sizeControl("Trans", transPt, setTransPtSync)}
+          {sizeControl("Main", origPt, setOrigPt)}
+          {sizeControl("Trans", transPt, setTransPt)}
           <button onClick={handleDone} style={{
             height: 28, borderRadius: 14, border: "1px solid rgba(255,255,255,0.15)",
             background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.8)",
@@ -410,21 +490,34 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         }}
       >
         {!mobile && showDeleteBtn && slides.length > 1 && (
-          <button onClick={() => deleteSlide(i)} style={{
-            position: "absolute", top: 8, left: 8, zIndex: 4,
-            width: 28, height: 28, borderRadius: "50%",
-            background: "rgba(255,60,60,0.8)", border: "none",
-            color: "#fff", cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            animation: "fi .15s ease",
-          }}><I.X s={12} /></button>
+          confirmDelete ? (
+            <button onClick={() => { deleteSlide(i); setConfirmDelete(false); }} style={{
+              position: "absolute", top: 8, left: 8, zIndex: 4,
+              height: 28, borderRadius: 14, padding: "0 12px",
+              background: "rgba(255,60,60,0.9)", border: "none",
+              color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: font,
+              display: "flex", alignItems: "center", gap: 4,
+              animation: "fi .15s ease",
+            }}>Delete?</button>
+          ) : (
+            <button onClick={() => setConfirmDelete(true)} style={{
+              position: "absolute", top: 8, left: 8, zIndex: 4,
+              width: 28, height: 28, borderRadius: "50%",
+              background: "rgba(255,60,60,0.8)", border: "none",
+              color: "#fff", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              animation: "fi .15s ease",
+            }}><I.X s={12} /></button>
+          )
         )}
 
         <div data-edit-region style={{
           position: "absolute", left: 0, right: 0,
           top: `${origTop}%`, height: `${origHeight}%`,
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          padding: `0 ${slideW * 0.031}px`,
+          display: "flex", flexDirection: "column", alignItems: "stretch", justifyContent: "flex-start",
+          padding: `0 ${slideW * 0.031}px`, overflow: "hidden",
+          border: editable && s.original.length === 0 ? '1px dashed rgba(255,255,255,0.15)' : 'none',
+          borderRadius: 4,
         }}>
           {s.original.length > 0
             ? s.original.map((l, j) => (
@@ -438,6 +531,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
                 fontWeight={700}
                 editable={editable}
                 onUpdate={updateLine}
+                onInsertLine={insertLineAfter}
                 onFieldFocus={handleFieldFocus}
                 onFieldBlur={handleFieldBlur}
               />
@@ -447,8 +541,10 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         <div data-edit-region style={{
           position: "absolute", left: 0, right: 0,
           top: `${transTop}%`, height: `${transHeight}%`,
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          padding: `0 ${slideW * 0.031}px`,
+          display: "flex", flexDirection: "column", alignItems: "stretch", justifyContent: "flex-start",
+          padding: `0 ${slideW * 0.031}px`, overflow: "hidden",
+          border: editable && s.translation.length === 0 ? '1px dashed rgba(255,255,255,0.15)' : 'none',
+          borderRadius: 4,
         }}>
           {s.translation.length > 0
             ? s.translation.map((l, j) => (
@@ -462,6 +558,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
                 fontWeight={400}
                 editable={editable}
                 onUpdate={updateLine}
+                onInsertLine={insertLineAfter}
                 onFieldFocus={handleFieldFocus}
                 onFieldBlur={handleFieldBlur}
               />
@@ -470,11 +567,11 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         </div>
       </div>
 
-      {/* Navigation dots with insert zones */}
-      <div style={{ display: "flex", alignItems: "center", gap: mobile ? 12 : 16, marginTop: mobile ? 16 : 24 }}>
+      {/* Slide filmstrip — draggable numbered chips */}
+      <div style={{ display: "flex", alignItems: "center", gap: mobile ? 8 : 12, marginTop: mobile ? 14 : 20 }}>
         {!mobile && (
           <button onClick={() => goToSlide(Math.max(0, i - 1))} disabled={i === 0} style={{
-            width: 44, height: 44, borderRadius: "50%",
+            width: 36, height: 36, borderRadius: "50%",
             background: i === 0 ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.08)",
             border: "1px solid rgba(255,255,255,0.1)",
             color: i === 0 ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.6)",
@@ -482,23 +579,53 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
             display: "flex", alignItems: "center", justifyContent: "center",
           }}><I.Left /></button>
         )}
-        <div style={{ display: "flex", gap: mobile ? 5 : 6, flexWrap: "wrap", justifyContent: "center", maxWidth: mobile ? "70vw" : "auto", alignItems: "center" }}>
+        <div style={{
+          display: "flex", gap: mobile ? 6 : 8, overflowX: "auto",
+          maxWidth: mobile ? "78vw" : "min(60vw, 700px)",
+          padding: "4px 2px", alignItems: "center",
+          WebkitOverflowScrolling: "touch",
+        }}>
           {slides.map((_, j) => (
-            <div key={j} style={{ display: "flex", alignItems: "center", gap: mobile ? 5 : 6 }}>
-              {j === 0 && !mobile && editable && <InsertZone onClick={() => insertSlide(-1)} />}
-              <button onClick={() => goToSlide(j)} style={{
-                width: j === i ? (mobile ? 18 : 22) : (mobile ? 6 : 8),
-                height: mobile ? 6 : 8, borderRadius: 4,
-                background: j === i ? T.primary : "rgba(255,255,255,0.2)",
-                border: "none", cursor: "pointer", transition: "all .2s ease", padding: 0,
-              }} />
-              {!mobile && editable && <InsertZone onClick={() => insertSlide(j)} />}
+            <div key={j} style={{ display: "flex", alignItems: "center", gap: mobile ? 6 : 8 }}>
+              {j === 0 && !mobile && editable && dragSlideIdx === null && <InsertZone onClick={() => insertSlide(-1)} />}
+              <button
+                draggable={!!editable && slides.length > 1}
+                onClick={() => { if (dragSlideIdx === null) goToSlide(j); }}
+                onDragStart={editable ? (e) => {
+                  setDragSlideIdx(j);
+                  e.dataTransfer.effectAllowed = 'move';
+                } : undefined}
+                onDragOver={editable ? (e) => {
+                  e.preventDefault();
+                  if (dragSlideIdx !== null && dragSlideIdx !== j) setDropSlideIdx(j);
+                } : undefined}
+                onDrop={editable ? () => {
+                  if (dragSlideIdx !== null && dropSlideIdx !== null) reorderSlide(dragSlideIdx, dropSlideIdx);
+                  setDragSlideIdx(null); setDropSlideIdx(null);
+                } : undefined}
+                onDragEnd={editable ? () => {
+                  setDragSlideIdx(null); setDropSlideIdx(null);
+                } : undefined}
+                style={{
+                  minWidth: mobile ? 28 : 32, height: mobile ? 22 : 26,
+                  borderRadius: 6, flexShrink: 0,
+                  background: j === i ? T.primary : dropSlideIdx === j ? "rgba(59,130,246,0.4)" : "rgba(255,255,255,0.1)",
+                  border: dropSlideIdx === j ? `2px solid ${T.primary}` : j === i ? "none" : "1px solid rgba(255,255,255,0.12)",
+                  color: j === i ? "#fff" : "rgba(255,255,255,0.5)",
+                  cursor: editable && slides.length > 1 ? "grab" : "pointer",
+                  transition: "all .15s ease", padding: "0 6px",
+                  opacity: dragSlideIdx === j ? 0.3 : 1,
+                  fontSize: mobile ? 10 : 11, fontWeight: 700, fontFamily: fontMono,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >{j + 1}</button>
+              {!mobile && editable && dragSlideIdx === null && <InsertZone onClick={() => insertSlide(j)} />}
             </div>
           ))}
         </div>
         {!mobile && (
           <button onClick={() => goToSlide(Math.min(slides.length - 1, i + 1))} disabled={i === slides.length - 1} style={{
-            width: 44, height: 44, borderRadius: "50%",
+            width: 36, height: 36, borderRadius: "50%",
             background: i === slides.length - 1 ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.08)",
             border: "1px solid rgba(255,255,255,0.1)",
             color: i === slides.length - 1 ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.6)",
@@ -508,28 +635,56 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         )}
       </div>
 
-      {/* Mobile: Add/Delete buttons */}
+      {/* Mobile: Move/Add/Delete buttons */}
       {mobile && editable && (
-        <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", justifyContent: "center" }}>
+          {slides.length > 1 && (
+            <>
+              <button disabled={i === 0} onClick={() => moveSlide(-1)} style={{
+                height: 32, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)",
+                background: i === 0 ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.06)",
+                color: i === 0 ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.6)",
+                cursor: i === 0 ? "default" : "pointer", padding: "0 12px", fontSize: 12, fontFamily: font,
+                display: "flex", alignItems: "center", gap: 4,
+              }}><I.Left s={11} /> Move</button>
+              <button disabled={i === slides.length - 1} onClick={() => moveSlide(1)} style={{
+                height: 32, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)",
+                background: i === slides.length - 1 ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.06)",
+                color: i === slides.length - 1 ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.6)",
+                cursor: i === slides.length - 1 ? "default" : "pointer", padding: "0 12px", fontSize: 12, fontFamily: font,
+                display: "flex", alignItems: "center", gap: 4,
+              }}>Move <I.Right s={11} /></button>
+            </>
+          )}
           <button onClick={() => insertSlide(i)} style={{
             height: 32, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)",
             background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.6)",
-            cursor: "pointer", padding: "0 16px", fontSize: 12, fontFamily: font,
-            display: "flex", alignItems: "center", gap: 5,
-          }}><I.Plus s={11} /> Add slide</button>
+            cursor: "pointer", padding: "0 12px", fontSize: 12, fontFamily: font,
+            display: "flex", alignItems: "center", gap: 4,
+          }}><I.Plus s={11} /> Add</button>
           {slides.length > 1 && (
-            <button onClick={() => deleteSlide(i)} style={{
-              height: 32, borderRadius: 16, border: "1px solid rgba(255,60,60,0.25)",
-              background: "rgba(255,60,60,0.08)", color: "rgba(255,100,100,0.8)",
-              cursor: "pointer", padding: "0 16px", fontSize: 12, fontFamily: font,
-              display: "flex", alignItems: "center", gap: 5,
-            }}><I.X s={11} /> Delete slide</button>
+            confirmDelete ? (
+              <button onClick={() => { deleteSlide(i); setConfirmDelete(false); }} style={{
+                height: 32, borderRadius: 16, border: "1px solid rgba(255,60,60,0.4)",
+                background: "rgba(255,60,60,0.15)", color: "rgba(255,100,100,0.9)",
+                cursor: "pointer", padding: "0 14px", fontSize: 12, fontWeight: 600, fontFamily: font,
+                display: "flex", alignItems: "center", gap: 4,
+                animation: "fi .15s ease",
+              }}>Delete?</button>
+            ) : (
+              <button onClick={() => setConfirmDelete(true)} style={{
+                height: 32, borderRadius: 16, border: "1px solid rgba(255,60,60,0.25)",
+                background: "rgba(255,60,60,0.08)", color: "rgba(255,100,100,0.8)",
+                cursor: "pointer", padding: "0 12px", fontSize: 12, fontFamily: font,
+                display: "flex", alignItems: "center", gap: 4,
+              }}><I.X s={11} /> Delete</button>
+            )
           )}
         </div>
       )}
 
       <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: font }}>
-        {isEditing ? "Click text to edit \u00b7 Enter to confirm \u00b7 Esc to finish" : mobile ? "Swipe to navigate" : "\u2190 \u2192 arrow keys \u00b7 Esc to close"}
+        {isEditing ? "Enter to confirm \u00b7 Shift+Enter for new line \u00b7 Esc to finish" : mobile ? "Swipe to navigate" : "\u2190 \u2192 arrow keys \u00b7 Esc to close"}
       </div>
     </div>
   );

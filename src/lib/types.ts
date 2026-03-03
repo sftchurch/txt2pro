@@ -9,6 +9,8 @@ export interface ParsedSlide {
   label: string;
   originalLines: string[];
   translationLines: string[];
+  origPt?: number;
+  transPt?: number;
 }
 
 export interface SlideTemplate {

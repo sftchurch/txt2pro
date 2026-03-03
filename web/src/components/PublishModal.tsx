@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { I } from './Icons';
 import { T, font } from '../theme';
 import { publishService } from '../lib/api';
@@ -15,6 +15,15 @@ interface PublishModalProps {
 export function PublishModal({ service, songs, mobile: mob, onClose, onPublished }: PublishModalProps) {
   const [note, setNote] = useState('');
   const [publishing, setPublishing] = useState(false);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !publishing) handlePublish();
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  });
 
   const handlePublish = async () => {
     setPublishing(true);
@@ -60,7 +69,7 @@ export function PublishModal({ service, songs, mobile: mob, onClose, onPublished
             Revision note <span style={{ color: T.textMuted, fontWeight: 400 }}>(optional)</span>
           </label>
           <input type="text" placeholder="e.g. Fixed chorus in song 2" value={note} onChange={e => setNote(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !publishing) handlePublish(); }}
+            onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
             style={{
               width: "100%", padding: mob ? "11px 12px" : "9px 12px", borderRadius: 8,
               border: `1px solid ${T.border}`, background: T.bg, fontSize: mob ? 16 : 13,
