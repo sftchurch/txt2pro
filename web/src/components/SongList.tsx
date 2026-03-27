@@ -7,11 +7,6 @@ import type { ClientSong } from '../lib/types';
 
 const SECTION_COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#ef4444'];
 
-function sectionColor(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
-  return SECTION_COLORS[Math.abs(h) % SECTION_COLORS.length];
-}
 
 interface SongGroup {
   section: string | undefined;
@@ -30,6 +25,10 @@ function groupSongs(songs: ClientSong[]): SongGroup[] {
     }
   }
   return groups;
+}
+
+function hasSections(songs: ClientSong[]): boolean {
+  return songs.some(s => !!s.section);
 }
 
 interface SongListProps {
@@ -99,6 +98,8 @@ const dropLine: React.CSSProperties = {
 
 export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, serviceId, version, onExpand, onRemove, onMove, onFullscreen, onSlideInsert, onSlideDelete, onSectionChange }: SongListProps) {
   const [editingSection, setEditingSection] = useState<number | null>(null);
+  const [taggingSong, setTaggingSong] = useState<number | null>(null);
+  const sectioned = hasSections(songs);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
   const [touchDragging, setTouchDragging] = useState(false);
@@ -227,7 +228,7 @@ export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, servi
     else rowRefsMap.current.delete(idx);
   }, []);
 
-  const renderSongRow = (song: ClientSong, i: number, isLast: boolean) => (
+  const renderSongRow = (song: ClientSong, i: number, isLast: boolean, groupColor?: string) => (
     <div
       key={i}
       ref={el => setRowRef(i, el)}
@@ -284,6 +285,15 @@ export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, servi
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }}>
+          {onSectionChange && (
+            <button onClick={e => { e.stopPropagation(); setTaggingSong(taggingSong === i ? null : i); }} style={{
+              width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent",
+              color: song.section && groupColor ? groupColor : T.textMuted, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: 0, flexShrink: 0, opacity: song.section ? 1 : 0.5,
+              transition: "opacity .15s",
+            }} title="Assign section"><I.Tag s={12} /></button>
+          )}
           {canDownload && (
             <a href={songProUrl(serviceId, version, i)} onClick={e => e.stopPropagation()} style={{
               width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent",
@@ -298,6 +308,48 @@ export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, servi
           }}><I.X /></button>
         </div>
       </div>
+
+      {/* Inline section tagger */}
+      {taggingSong === i && onSectionChange && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: mob ? "6px 10px 6px 44px" : "6px 14px 6px 52px",
+            borderBottom: `1px solid ${T.borderLight}`,
+            background: T.bgSubtle, animation: "sd .12s ease",
+          }}
+        >
+          <span style={{ fontSize: 11, color: T.textMuted, fontWeight: 600, flexShrink: 0 }}>Section:</span>
+          <input
+            autoFocus
+            placeholder="e.g. Worship, Offering, Closing"
+            defaultValue={song.section || ''}
+            onBlur={e => {
+              onSectionChange(i, e.target.value.trim());
+              setTaggingSong(null);
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              if (e.key === 'Escape') setTaggingSong(null);
+            }}
+            style={{
+              flex: 1, background: 'transparent', border: 'none', outline: 'none',
+              color: T.textPrimary, fontSize: 12, fontFamily: font, padding: "2px 0",
+            }}
+          />
+          {song.section && (
+            <button
+              onClick={() => { onSectionChange(i, ''); setTaggingSong(null); }}
+              style={{
+                background: 'none', border: 'none', color: T.textMuted,
+                cursor: 'pointer', padding: 2, display: 'flex', flexShrink: 0,
+              }}
+              title="Remove section"
+            ><I.X s={10} /></button>
+          )}
+        </div>
+      )}
 
       {exp === i && (
         <div style={{ padding: mob ? "10px 10px" : "14px 14px", background: T.bgSubtle, borderBottom: !isLast ? `1px solid ${T.borderLight}` : "none", animation: "sd .15s cubic-bezier(.16,1,.3,1)" }}>
@@ -385,99 +437,82 @@ export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, servi
       </div>
       {groups.map((group, gi) => {
         const displayName = group.section || 'Songs';
-        const color = sectionColor(displayName);
+        const color = SECTION_COLORS[gi % SECTION_COLORS.length];
         const isDefault = !group.section;
+        const showHeader = sectioned;
 
         return (
           <Fragment key={gi}>
             <div style={{
               ...card(),
-              borderLeft: `3px solid ${color}`,
+              ...(showHeader ? { borderLeft: `3px solid ${color}` } : {}),
               marginBottom: 8,
             }}>
-              <div style={{
-                display: 'flex', alignItems: 'center',
-                padding: mob ? '6px 10px' : '7px 14px',
-                borderBottom: `1px solid ${T.borderLight}`,
-                gap: 8,
-              }}>
+              {showHeader && (
                 <div style={{
-                  width: 8, height: 8, borderRadius: '50%',
-                  background: color,
-                  flexShrink: 0,
-                }} />
-                {editingSection === gi && onSectionChange ? (
-                  <input
-                    autoFocus
-                    defaultValue={displayName}
-                    onBlur={e => {
-                      const v = e.target.value.trim();
-                      if (v && v !== displayName) {
-                        group.items.forEach(item => onSectionChange(item.index, v));
-                      }
-                      setEditingSection(null);
-                    }}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                      if (e.key === 'Escape') setEditingSection(null);
-                    }}
-                    style={{
-                      flex: 1, background: 'transparent', border: 'none', outline: 'none',
-                      color: T.textSecondary, fontSize: 11, fontWeight: 650,
-                      textTransform: 'uppercase', letterSpacing: '.06em',
-                      fontFamily: font, padding: 0,
-                    }}
-                  />
-                ) : (
-                  <span
-                    onClick={onSectionChange ? () => setEditingSection(gi) : undefined}
-                    style={{
-                      flex: 1, fontSize: 11, fontWeight: 650,
-                      textTransform: 'uppercase', letterSpacing: '.06em',
-                      color: T.textSecondary,
-                      cursor: onSectionChange ? 'pointer' : 'default',
-                    }}
-                  >
-                    {displayName}
-                  </span>
-                )}
-                {!isDefault && onSectionChange && (
-                  <button
-                    onClick={() => group.items.forEach(item => onSectionChange(item.index, ''))}
-                    style={{
-                      width: 20, height: 20, borderRadius: 5,
-                      border: 'none', background: 'transparent',
-                      color: T.textMuted, cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      padding: 0, flexShrink: 0,
-                    }}
-                  ><I.X s={10} /></button>
-                )}
-              </div>
+                  display: 'flex', alignItems: 'center',
+                  padding: mob ? '6px 10px' : '7px 14px',
+                  borderBottom: `1px solid ${T.borderLight}`,
+                  gap: 8,
+                }}>
+                  <div style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: color,
+                    flexShrink: 0,
+                  }} />
+                  {editingSection === gi && onSectionChange ? (
+                    <input
+                      autoFocus
+                      defaultValue={displayName}
+                      onBlur={e => {
+                        const v = e.target.value.trim();
+                        if (v && v !== displayName) {
+                          group.items.forEach(item => onSectionChange(item.index, v));
+                        }
+                        setEditingSection(null);
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                        if (e.key === 'Escape') setEditingSection(null);
+                      }}
+                      style={{
+                        flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                        color: T.textSecondary, fontSize: 11, fontWeight: 650,
+                        textTransform: 'uppercase', letterSpacing: '.06em',
+                        fontFamily: font, padding: 0,
+                      }}
+                    />
+                  ) : (
+                    <span
+                      onClick={onSectionChange ? () => setEditingSection(gi) : undefined}
+                      style={{
+                        flex: 1, fontSize: 11, fontWeight: 650,
+                        textTransform: 'uppercase', letterSpacing: '.06em',
+                        color: T.textSecondary,
+                        cursor: onSectionChange ? 'pointer' : 'default',
+                      }}
+                    >
+                      {displayName}
+                    </span>
+                  )}
+                  {!isDefault && onSectionChange && (
+                    <button
+                      onClick={() => group.items.forEach(item => onSectionChange(item.index, ''))}
+                      style={{
+                        width: 20, height: 20, borderRadius: 5,
+                        border: 'none', background: 'transparent',
+                        color: T.textMuted, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        padding: 0, flexShrink: 0,
+                      }}
+                    ><I.X s={10} /></button>
+                  )}
+                </div>
+              )}
               {group.items.map(({ song, index }, j) =>
-                renderSongRow(song, index, j === group.items.length - 1)
+                renderSongRow(song, index, j === group.items.length - 1, color)
               )}
             </div>
-            {onSectionChange && group.items.length > 1 && (
-              <button
-                onClick={() => {
-                  const lastItem = group.items[group.items.length - 1];
-                  onSectionChange(lastItem.index, 'Untitled');
-                }}
-                style={{
-                  width: '100%', height: 30, borderRadius: 8,
-                  background: 'transparent', border: `1.5px dashed ${T.border}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  gap: 6, color: T.textMuted, cursor: 'pointer',
-                  fontSize: 11, fontWeight: 600, fontFamily: font,
-                  marginBottom: 8, transition: 'border-color .2s, color .2s',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = T.primary; e.currentTarget.style.color = T.primary; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}
-              >
-                <I.Plus s={11} /> Add Section
-              </button>
-            )}
           </Fragment>
         );
       })}

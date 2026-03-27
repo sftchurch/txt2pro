@@ -31,74 +31,78 @@ const spinnerCSS = `
   input[type=number].pt-input::-webkit-outer-spin-button,
   input[type=number].pt-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   input[type=number].pt-input{-moz-appearance:textfield}
+  [data-placeholder="true"]:empty::before{content:"Text";opacity:0.3}
+  [data-placeholder="true"]:focus::before{content:none}
 `;
 
-/** Ref-based contentEditable line — avoids React overwriting user edits */
-function EditableLine({ text, field, lineIdx, color, fontSize, fontWeight, editable, onUpdate, onInsertLine, onFieldFocus, onFieldBlur }: {
-  text: string;
+/** Single contentEditable block per field — natural text editing with line breaks */
+function EditableBlock({ lines, field, color, fontSize, fontWeight, editable, onUpdate, onFieldFocus, onFieldBlur }: {
+  lines: string[];
   field: 'original' | 'translation';
-  lineIdx: number;
   color: string;
   fontSize: number;
   fontWeight: number;
   editable?: boolean;
-  onUpdate: (field: 'original' | 'translation', lineIdx: number, text: string) => void;
-  onInsertLine?: (field: 'original' | 'translation', afterLineIdx: number) => void;
+  onUpdate: (field: 'original' | 'translation', lines: string[]) => void;
   onFieldFocus: (field: 'original' | 'translation') => void;
   onFieldBlur: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const localText = useRef(text);
+  const localText = useRef(lines.join('\n'));
 
-  // Set content on mount and when text changes from parent state
   useEffect(() => {
     if (ref.current) {
-      // Only update DOM if the state value differs from what we're tracking
-      if (localText.current !== text) {
-        ref.current.textContent = text;
+      const joined = lines.join('\n');
+      if (localText.current !== joined) {
+        ref.current.innerText = joined;
+        localText.current = joined;
       }
-      localText.current = text;
     }
-  }, [text]);
+  }, [lines]);
+
+  const isEmpty = lines.length === 0;
 
   return (
     <div
       ref={el => {
         (ref as React.MutableRefObject<HTMLDivElement | null>).current = el;
-        // Set initial content on mount
-        if (el && !el.textContent) el.textContent = text;
+        if (el && el.innerText === '' && lines.length > 0) {
+          el.innerText = lines.join('\n');
+        }
       }}
       contentEditable={editable}
       suppressContentEditableWarning
       data-edit-region
       data-field={field}
-      data-line-idx={lineIdx}
-      onFocus={() => onFieldFocus(field)}
+      data-placeholder={isEmpty ? 'true' : undefined}
+      onFocus={() => {
+        onFieldFocus(field);
+        if (isEmpty && ref.current) {
+          ref.current.innerText = '';
+          localText.current = '';
+        }
+      }}
       onInput={() => {
-        if (ref.current) localText.current = ref.current.textContent || '';
+        if (ref.current) localText.current = ref.current.innerText || '';
       }}
       onBlur={() => {
-        const t = localText.current;
-        if (t !== text) onUpdate(field, lineIdx, t);
+        const text = (localText.current || '').replace(/\r\n/g, '\n');
+        const newLines = text.split('\n');
+        // Trim trailing empty lines
+        while (newLines.length > 0 && newLines[newLines.length - 1].trim() === '') {
+          newLines.pop();
+        }
+        onUpdate(field, newLines);
         onFieldBlur();
       }}
-      onKeyDown={editable ? (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && e.shiftKey) {
-          e.preventDefault();
-          // Save current text then insert new line after this one
-          const t = localText.current;
-          if (t !== text) onUpdate(field, lineIdx, t);
-          onInsertLine?.(field, lineIdx);
-        } else if (e.key === 'Enter') {
-          e.preventDefault();
-          (e.target as HTMLElement).blur();
-        }
-      } : undefined}
       style={{
         color, fontSize, fontWeight, textAlign: "center",
         fontFamily: proFont, lineHeight: 1.3, outline: "none",
+        whiteSpace: "pre-wrap", wordBreak: "break-word",
         caretColor: editable ? "currentColor" : undefined,
         cursor: editable ? "text" : undefined,
+        opacity: isEmpty && !editable ? 0 : undefined,
+        minHeight: editable && isEmpty ? '1.3em' : undefined,
       }}
     />
   );
@@ -184,52 +188,14 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
 
   const markDirty = () => { setDirty(true); dirtyRef.current = true; };
 
-  const updateLine = useCallback((field: 'original' | 'translation', lineIdx: number, text: string) => {
-    setSlides(prev => {
-      const idx = i; // capture current slide index
-      const updated = prev.map((sl, si) => {
-        if (si !== idx) return sl;
-        const u = { ...sl, [field]: [...sl[field]] };
-        u[field][lineIdx] = text;
-        return u;
-      });
-      slidesRef.current = updated;
-      return updated;
-    });
-    markDirty();
-  }, [i]);
-
-  const addLine = useCallback((field: 'original' | 'translation', text: string) => {
+  const updateField = useCallback((field: 'original' | 'translation', lines: string[]) => {
     setSlides(prev => {
       const idx = i;
-      const updated = prev.map((sl, si) => {
-        if (si !== idx) return sl;
-        return { ...sl, [field]: [...sl[field], text] };
-      });
+      const updated = prev.map((sl, si) => si !== idx ? sl : { ...sl, [field]: lines });
       slidesRef.current = updated;
       return updated;
     });
     markDirty();
-  }, [i]);
-
-  const insertLineAfter = useCallback((field: 'original' | 'translation', afterLineIdx: number) => {
-    setSlides(prev => {
-      const idx = i;
-      const updated = prev.map((sl, si) => {
-        if (si !== idx) return sl;
-        const lines = [...sl[field]];
-        lines.splice(afterLineIdx + 1, 0, '');
-        return { ...sl, [field]: lines };
-      });
-      slidesRef.current = updated;
-      return updated;
-    });
-    markDirty();
-    // Focus the new line after React re-renders
-    setTimeout(() => {
-      const el = document.querySelector(`[data-field="${field}"][data-line-idx="${afterLineIdx + 1}"]`) as HTMLElement | null;
-      el?.focus();
-    }, 30);
   }, [i]);
 
   const deleteSlide = (idx: number) => {
@@ -359,43 +325,6 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
     }
   }, [slides.length, isEditing, goToSlide, i]);
 
-  const lineStyle = (color: string, fontSize: number, fontWeight: number): React.CSSProperties => ({
-    color, fontSize, fontWeight, textAlign: "center",
-    fontFamily: proFont, lineHeight: 1.3, outline: "none",
-    caretColor: editable ? "currentColor" : undefined,
-    cursor: editable ? "text" : undefined,
-  });
-
-  const renderPlaceholder = (field: 'original' | 'translation', color: string, fontSize: number, fontWeight: number) => (
-    <div
-      key={`${i}-${field}-placeholder`}
-      contentEditable
-      suppressContentEditableWarning
-      data-edit-region
-      onFocus={e => {
-        handleFieldFocus(field);
-        if (e.currentTarget.textContent === 'Text') {
-          e.currentTarget.textContent = '';
-          e.currentTarget.style.opacity = '1';
-        }
-      }}
-      onBlur={e => {
-        const t = (e.currentTarget.textContent || '').trim();
-        if (t) {
-          addLine(field, t);
-        } else {
-          e.currentTarget.textContent = 'Text';
-          e.currentTarget.style.opacity = '0.3';
-        }
-        handleFieldBlur();
-      }}
-      onKeyDown={e => {
-        if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
-      }}
-      style={{ ...lineStyle(color, fontSize, fontWeight), opacity: 0.3 }}
-    >Text</div>
-  );
-
   const clampPt = (v: number) => Math.max(20, Math.min(300, Math.round(v)));
 
   const setOrigPt = (v: number) => {
@@ -511,7 +440,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
           )
         )}
 
-        <div data-edit-region style={{
+        <div style={{
           position: "absolute", left: 0, right: 0,
           top: `${origTop}%`, height: `${origHeight}%`,
           display: "flex", flexDirection: "column", alignItems: "stretch", justifyContent: "flex-start",
@@ -519,26 +448,20 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
           border: editable && s.original.length === 0 ? '1px dashed rgba(255,255,255,0.15)' : 'none',
           borderRadius: 4,
         }}>
-          {s.original.length > 0
-            ? s.original.map((l, j) => (
-              <EditableLine
-                key={`${i}-original-${j}`}
-                text={l}
-                field="original"
-                lineIdx={j}
-                color="#fff"
-                fontSize={origFontPx}
-                fontWeight={700}
-                editable={editable}
-                onUpdate={updateLine}
-                onInsertLine={insertLineAfter}
-                onFieldFocus={handleFieldFocus}
-                onFieldBlur={handleFieldBlur}
-              />
-            ))
-            : editable && renderPlaceholder('original', "#fff", origFontPx, 700)}
+          <EditableBlock
+            key={`${i}-original`}
+            lines={s.original}
+            field="original"
+            color="#fff"
+            fontSize={origFontPx}
+            fontWeight={400}
+            editable={editable}
+            onUpdate={updateField}
+            onFieldFocus={handleFieldFocus}
+            onFieldBlur={handleFieldBlur}
+          />
         </div>
-        <div data-edit-region style={{
+        <div style={{
           position: "absolute", left: 0, right: 0,
           top: `${transTop}%`, height: `${transHeight}%`,
           display: "flex", flexDirection: "column", alignItems: "stretch", justifyContent: "flex-start",
@@ -546,24 +469,18 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
           border: editable && s.translation.length === 0 ? '1px dashed rgba(255,255,255,0.15)' : 'none',
           borderRadius: 4,
         }}>
-          {s.translation.length > 0
-            ? s.translation.map((l, j) => (
-              <EditableLine
-                key={`${i}-translation-${j}`}
-                text={l}
-                field="translation"
-                lineIdx={j}
-                color={transColor}
-                fontSize={transFontPx}
-                fontWeight={400}
-                editable={editable}
-                onUpdate={updateLine}
-                onInsertLine={insertLineAfter}
-                onFieldFocus={handleFieldFocus}
-                onFieldBlur={handleFieldBlur}
-              />
-            ))
-            : editable && renderPlaceholder('translation', transColor, transFontPx, 400)}
+          <EditableBlock
+            key={`${i}-translation`}
+            lines={s.translation}
+            field="translation"
+            color={transColor}
+            fontSize={transFontPx}
+            fontWeight={400}
+            editable={editable}
+            onUpdate={updateField}
+            onFieldFocus={handleFieldFocus}
+            onFieldBlur={handleFieldBlur}
+          />
         </div>
       </div>
 
@@ -684,7 +601,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
       )}
 
       <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.2)", fontFamily: font }}>
-        {isEditing ? "Enter to confirm \u00b7 Shift+Enter for new line \u00b7 Esc to finish" : mobile ? "Swipe to navigate" : "\u2190 \u2192 arrow keys \u00b7 Esc to close"}
+        {isEditing ? "Tap text to edit \u00b7 Esc to finish" : mobile ? "Swipe to navigate" : "\u2190 \u2192 arrow keys \u00b7 Esc to close"}
       </div>
     </div>
   );

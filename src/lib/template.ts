@@ -4,10 +4,10 @@ export const DEFAULT_TEMPLATE: SlideTemplate = {
   width: 1920,
   height: 1080,
   original: {
-    fontName: 'LinBiolinumB',
+    fontName: 'LinBiolinum',
     fontFamily: 'Linux Biolinum',
     fontSize: 120,
-    bold: true,
+    bold: false,
     italic: false,
     color: { r: 1, g: 1, b: 1, a: 1 }, // white
     alignment: 'center',

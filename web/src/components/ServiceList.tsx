@@ -16,6 +16,49 @@ interface UnifiedItem {
   service?: Service;
 }
 
+const SONG_TEMPLATE = `[Verse 1]
+Main language line 1
+Main language line 2
+
+Translation line 1
+Translation line 2
+
+[Chorus]
+Main chorus line 1
+Main chorus line 2
+
+Translation chorus line 1
+Translation chorus line 2
+
+[Verse 2]
+Main verse 2 line 1
+Main verse 2 line 2
+
+Translation verse 2 line 1
+Translation verse 2 line 2
+
+[Bridge]
+Main bridge line 1
+Main bridge line 2
+
+Translation bridge line 1
+Translation bridge line 2
+
+[Outro]
+Main outro line 1
+
+Translation outro line 1
+`;
+
+function downloadTemplate() {
+  const blob = new Blob([SONG_TEMPLATE], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'Song_Title.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 const EXCLUDED_PREFIXES = ['SFT Youth', 'SFT Young Adults', 'SFT YA'];
 
 const RECURRING_SERVICES = [
@@ -513,6 +556,52 @@ export function ServiceList({ mobile: mob, fade: f, onSelect, onCreate }: Servic
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Resources */}
+      {!loading && (
+        <div style={{ marginTop: 28, ...anim(f, 0.25) }}>
+          <h2 style={{ fontSize: 11, fontWeight: 650, textTransform: "uppercase", letterSpacing: "0.08em", color: T.textMuted, margin: "0 0 8px 1px" }}>Resources</h2>
+          <div style={{ display: "flex", gap: 10, flexDirection: mob ? "column" : "row" }}>
+            <a
+              href="/fonts/LinuxBiolinum.zip"
+              download
+              style={{
+                flex: 1, display: "flex", alignItems: "center", gap: 8,
+                padding: "10px 14px", borderRadius: 10,
+                background: T.bgSubtle, border: `1px solid ${T.borderLight}`,
+                textDecoration: "none", cursor: "pointer",
+                transition: "background .15s ease",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = T.surfaceHover)}
+              onMouseLeave={e => (e.currentTarget.style.background = T.bgSubtle)}
+            >
+              <span style={{ color: T.primary, flexShrink: 0 }}><I.Type s={15} /></span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: T.textSecondary }}>Linux Biolinum Font</div>
+              </div>
+              <span style={{ color: T.textMuted, flexShrink: 0 }}><I.Download s={13} /></span>
+            </a>
+            <button
+              onClick={downloadTemplate}
+              style={{
+                flex: 1, display: "flex", alignItems: "center", gap: 8,
+                padding: "10px 14px", borderRadius: 10,
+                background: T.bgSubtle, border: `1px solid ${T.borderLight}`,
+                cursor: "pointer", fontFamily: font, textAlign: "left",
+                transition: "background .15s ease",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = T.surfaceHover)}
+              onMouseLeave={e => (e.currentTarget.style.background = T.bgSubtle)}
+            >
+              <span style={{ color: T.textSecondary, flexShrink: 0 }}><I.File s={15} /></span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: T.textSecondary }}>Song Template (.txt)</div>
+              </div>
+              <span style={{ color: T.textMuted, flexShrink: 0 }}><I.Download s={13} /></span>
+            </button>
+          </div>
         </div>
       )}
     </>

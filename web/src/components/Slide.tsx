@@ -60,7 +60,7 @@ export function Slide({ slide, small, mobile, onClick, origPt, transPt }: SlideP
         padding: `0 ${pad}px`, overflow: "hidden",
       }}>
         {slide.original.map((l, i) => <div key={i} style={{
-          color: "#fff", fontSize: origSize, fontWeight: 700, textAlign: "center",
+          color: "#fff", fontSize: origSize, fontWeight: 400, textAlign: "center",
           fontFamily: proFont, lineHeight: 1.3,
         }}>{l}</div>)}
       </div>
