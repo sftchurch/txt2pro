@@ -74,6 +74,8 @@ export default function App() {
   const [restored, setRestored] = useState(false);
   const [dirty, setDirty] = useState(false);
   const savedSongsRef = useRef<ClientSong[] | null>(null);
+  const songsRef = useRef(songs);
+  songsRef.current = songs;
 
   // Mark the working set as edited so it gets persisted as a local draft
   const touch = () => setDirty(true);
@@ -406,6 +408,28 @@ export default function App() {
           slides={fs.slides}
           start={fs.start}
           editable={fs.songIndex !== undefined}
+          onChange={editedSlides => {
+            // Live autosave while the editor is open (commit on blur / structural edit)
+            if (fs.songIndex === undefined) return;
+            touch();
+            setPublished(null);
+            setSongs(prev => prev.map((song, idx) => idx !== fs.songIndex ? song : {
+              ...song,
+              slides: editedSlides,
+              count: editedSlides.length,
+              file: slidesToFile(editedSlides, song.filename),
+            }));
+          }}
+          onFlush={editedSlides => {
+            // Synchronous write on refresh/backgrounding — can't wait for React effects
+            if (!svc || fs.songIndex === undefined || previewVersion !== null) return;
+            const updated = songsRef.current.map((song, idx) => idx !== fs.songIndex ? song : {
+              ...song,
+              slides: editedSlides,
+              count: editedSlides.length,
+            });
+            saveDraft(svc.id, svc.current_version, updated, Date.now());
+          }}
           onClose={(editedSlides) => {
             if (editedSlides && fs.songIndex !== undefined) {
               touch();

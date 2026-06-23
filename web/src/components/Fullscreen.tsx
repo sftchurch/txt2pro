@@ -36,7 +36,7 @@ const spinnerCSS = `
 `;
 
 /** Single contentEditable block per field — natural text editing with line breaks */
-function EditableBlock({ lines, field, color, fontSize, fontWeight, editable, onUpdate, onFieldFocus, onFieldBlur }: {
+function EditableBlock({ lines, field, color, fontSize, fontWeight, editable, onUpdate, onLive, onFieldFocus, onFieldBlur }: {
   lines: string[];
   field: 'original' | 'translation';
   color: string;
@@ -44,6 +44,7 @@ function EditableBlock({ lines, field, color, fontSize, fontWeight, editable, on
   fontWeight: number;
   editable?: boolean;
   onUpdate: (field: 'original' | 'translation', lines: string[]) => void;
+  onLive: (field: 'original' | 'translation', lines: string[]) => void;
   onFieldFocus: (field: 'original' | 'translation') => void;
   onFieldBlur: () => void;
 }) {
@@ -83,7 +84,10 @@ function EditableBlock({ lines, field, color, fontSize, fontWeight, editable, on
         }
       }}
       onInput={() => {
-        if (ref.current) localText.current = ref.current.innerText || '';
+        if (ref.current) {
+          localText.current = ref.current.innerText || '';
+          onLive(field, localText.current.replace(/\r\n/g, '\n').split('\n'));
+        }
       }}
       onBlur={() => {
         const text = (localText.current || '').replace(/\r\n/g, '\n');
@@ -135,9 +139,13 @@ interface FullscreenProps {
   onClose: (editedSlides?: ClientSlide[]) => void;
   mobile: boolean;
   editable?: boolean;
+  // Live autosave: fires when an edit is committed (blur, delete, insert, reorder, font)
+  onChange?: (slides: ClientSlide[]) => void;
+  // Synchronous flush on refresh / backgrounding — captures the focused, still-being-typed field
+  onFlush?: (slides: ClientSlide[]) => void;
 }
 
-export function Fullscreen({ slides: initialSlides, start, onClose, mobile, editable }: FullscreenProps) {
+export function Fullscreen({ slides: initialSlides, start, onClose, mobile, editable, onChange, onFlush }: FullscreenProps) {
   const [i, setI] = useState(start);
   const [activeField, setActiveField] = useState<'original' | 'translation' | null>(null);
   const [slides, setSlides] = useState(() => initialSlides.map(s => ({
@@ -227,6 +235,49 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   const transFontPx = Math.min(slideH * (transPt / 1080) * 0.9, transBoxH / (transLines * 1.35));
 
   const markDirty = () => { setDirty(true); dirtyRef.current = true; };
+
+  // Keep latest callbacks in refs so the unload listener never goes stale
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const onFlushRef = useRef(onFlush);
+  onFlushRef.current = onFlush;
+  const mountedRef = useRef(false);
+
+  // Propagate committed edits up so they autosave as a draft without closing the editor
+  useEffect(() => {
+    if (!mountedRef.current) { mountedRef.current = true; return; }
+    onChangeRef.current?.(slides);
+  }, [slides]);
+
+  // On refresh / tab close / backgrounding, synchronously capture the field that's
+  // still being typed (React state/effects won't flush before the page unloads)
+  useEffect(() => {
+    const flush = () => {
+      if (!dirtyRef.current) return;
+      let current = slidesRef.current;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && el.hasAttribute('data-edit-region')) {
+        const field = el.getAttribute('data-field') as 'original' | 'translation' | null;
+        if (field) {
+          const liveLines = (el.innerText || '').replace(/\r\n/g, '\n').split('\n');
+          while (liveLines.length && liveLines[liveLines.length - 1].trim() === '') liveLines.pop();
+          current = current.map((sl, si) => si === i ? { ...sl, [field]: liveLines } : sl);
+        }
+      }
+      onFlushRef.current?.(current);
+    };
+    const onVis = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [i]);
+
+  // Live typing only marks the draft dirty (so flush/close save it). The actual text is
+  // committed to state on blur; the unload flush reads the focused field straight from the DOM.
+  const liveEdit = useCallback(() => { markDirty(); }, []);
 
   const updateField = useCallback((field: 'original' | 'translation', lines: string[]) => {
     // Skip if the text is unchanged (blur fires even when nothing was edited)
@@ -358,6 +409,12 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
         e.preventDefault();
         redo();
+        return;
+      }
+      // Number keys 1-9 jump to that slide (only when not typing in a field)
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && /^[1-9]$/.test(e.key)) {
+        const target = Number(e.key) - 1;
+        if (target < slides.length) { e.preventDefault(); goToSlide(target); }
         return;
       }
       if (e.key === "ArrowRight") goToSlide(Math.min(slides.length - 1, i + 1));
@@ -544,6 +601,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
             fontWeight={400}
             editable={editable}
             onUpdate={updateField}
+            onLive={liveEdit}
             onFieldFocus={handleFieldFocus}
             onFieldBlur={handleFieldBlur}
           />
@@ -565,6 +623,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
             fontWeight={400}
             editable={editable}
             onUpdate={updateField}
+            onLive={liveEdit}
             onFieldFocus={handleFieldFocus}
             onFieldBlur={handleFieldBlur}
           />
