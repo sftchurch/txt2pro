@@ -1,7 +1,7 @@
 [package]
 name = "txt2pro-sync"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Mirrors published txt2pro .proBundle files onto the ProPresenter Mac"
 
 [dependencies]
