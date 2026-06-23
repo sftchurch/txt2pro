@@ -8,12 +8,13 @@ interface EditorHeaderProps {
   mobile: boolean;
   fade: boolean;
   hasSongs: boolean;
+  saveStatus?: 'saving' | 'saved' | null;
   showHistory: boolean;
   onBack: () => void;
   onToggleHistory: () => void;
 }
 
-export function EditorHeader({ service, mobile: mob, fade: f, hasSongs, showHistory, onBack, onToggleHistory }: EditorHeaderProps) {
+export function EditorHeader({ service, mobile: mob, fade: f, hasSongs, saveStatus, showHistory, onBack, onToggleHistory }: EditorHeaderProps) {
   const ver = service.current_version;
   const published = ver > 0;
 
@@ -35,8 +36,15 @@ export function EditorHeader({ service, mobile: mob, fade: f, hasSongs, showHist
               }}>v{ver}</span>
             )}
           </div>
-          <p style={{ fontSize: 12, color: T.textMuted, margin: "1px 0 0" }}>
-            {service.service_date}
+          <p style={{ fontSize: 12, color: T.textMuted, margin: "1px 0 0", display: "flex", alignItems: "center", gap: 6 }}>
+            <span>{service.service_date}</span>
+            {saveStatus && (
+              <span style={{ display: "flex", alignItems: "center", gap: 3, color: saveStatus === 'saved' ? T.success : T.textMuted }}>
+                <span aria-hidden style={{ opacity: 0.5 }}>·</span>
+                {saveStatus === 'saved' ? <I.Check s={11} /> : null}
+                {saveStatus === 'saved' ? 'Saved' : 'Saving…'}
+              </span>
+            )}
           </p>
         </div>
       </div>

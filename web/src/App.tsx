@@ -73,6 +73,7 @@ export default function App() {
   const [previewVersion, setPreviewVersion] = useState<number | null>(null);
   const [restored, setRestored] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [saveState, setSaveState] = useState<'saving' | 'saved' | null>(null);
   const savedSongsRef = useRef<ClientSong[] | null>(null);
   const songsRef = useRef(songs);
   songsRef.current = songs;
@@ -149,6 +150,7 @@ export default function App() {
     if (view !== 'editor' || !svc) return;
     setRestored(false);
     setDirty(false);
+    setSaveState(null);
     const draft = loadDraft(svc.id);
     if (draft && draft.songs.length > 0) {
       setSongs(draftToSongs(draft));
@@ -168,8 +170,12 @@ export default function App() {
   useEffect(() => {
     if (view !== 'editor' || !svc || !dirty) return;
     if (previewVersion !== null) return; // don't overwrite the draft while previewing history
-    if (songs.length === 0) { removeDraft(svc.id); return; }
+    if (songs.length === 0) { removeDraft(svc.id); setSaveState(null); return; }
+    setSaveState('saving');
     saveDraft(svc.id, svc.current_version, songs, Date.now());
+    // Settle to "saved" once edits stop streaming in (cleared if another edit lands first)
+    const t = setTimeout(() => setSaveState('saved'), 500);
+    return () => clearTimeout(t);
   }, [songs, dirty, view, svc?.id, svc?.current_version, previewVersion]);
 
   const discardDraft = () => {
@@ -249,6 +255,7 @@ export default function App() {
           mobile={mob}
           fade={fade}
           hasSongs={songs.length > 0}
+          saveStatus={previewVersion === null ? saveState : null}
           showHistory={showHist}
           onBack={() => go(() => { setView('services'); history.pushState(null, '', '/'); })}
           onToggleHistory={() => setShowHist(!showHist)}
@@ -397,6 +404,7 @@ export default function App() {
               if (svc) removeDraft(svc.id);
               setRestored(false);
               setDirty(false);
+              setSaveState(null);
               if (svc) setSvc({ ...svc, current_version: result.version });
             }}
           />
@@ -408,6 +416,7 @@ export default function App() {
           slides={fs.slides}
           start={fs.start}
           editable={fs.songIndex !== undefined}
+          saveStatus={saveState}
           onChange={editedSlides => {
             // Live autosave while the editor is open (commit on blur / structural edit)
             if (fs.songIndex === undefined) return;

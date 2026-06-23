@@ -143,9 +143,10 @@ interface FullscreenProps {
   onChange?: (slides: ClientSlide[]) => void;
   // Synchronous flush on refresh / backgrounding — captures the focused, still-being-typed field
   onFlush?: (slides: ClientSlide[]) => void;
+  saveStatus?: 'saving' | 'saved' | null;
 }
 
-export function Fullscreen({ slides: initialSlides, start, onClose, mobile, editable, onChange, onFlush }: FullscreenProps) {
+export function Fullscreen({ slides: initialSlides, start, onClose, mobile, editable, onChange, onFlush, saveStatus }: FullscreenProps) {
   const [i, setI] = useState(start);
   const [activeField, setActiveField] = useState<'original' | 'translation' | null>(null);
   const [slides, setSlides] = useState(() => initialSlides.map(s => ({
@@ -527,6 +528,15 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
                 }}
               ><I.Undo s={14} /></button>
             </div>
+          )}
+          {editable && saveStatus && (
+            <span style={{
+              display: "flex", alignItems: "center", gap: 3, fontSize: 11,
+              color: saveStatus === 'saved' ? "rgba(120,230,180,0.9)" : "rgba(255,255,255,0.4)",
+            }}>
+              {saveStatus === 'saved' ? <I.Check s={11} /> : null}
+              {saveStatus === 'saved' ? 'Saved' : 'Saving…'}
+            </span>
           )}
         </div>
         <button onClick={handleClose} style={pill()}><I.X s={15} /></button>
