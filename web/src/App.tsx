@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWidth } from './hooks/useWidth';
 import { useDarkMode } from './hooks/useDarkMode';
-import { T, applyScheme, pageBase, container, globalCSS } from './theme';
+import { T, font, applyScheme, pageBase, container, globalCSS } from './theme';
+import { I } from './components/Icons';
 import { ServiceList } from './components/ServiceList';
 import { EditorHeader } from './components/EditorHeader';
 import { VersionHistory } from './components/VersionHistory';
@@ -12,6 +13,7 @@ import { PublishBar } from './components/PublishBar';
 import { PublishModal } from './components/PublishModal';
 import { Fullscreen } from './components/Fullscreen';
 import { fetchLyrics, fetchService } from './lib/api';
+import { slidesToFile, saveDraft, loadDraft, removeDraft, draftToSongs } from './lib/draft';
 import type { Service, ClientSong, ClientSlide, PublishResult } from './lib/types';
 
 type View = 'services' | 'editor';
@@ -20,16 +22,6 @@ interface FsState {
   slides: ClientSlide[];
   start: number;
   songIndex?: number;
-}
-
-function slidesToFile(slides: ClientSlide[], filename: string): File {
-  const text = slides.map(s => {
-    const parts: string[] = [];
-    if (s.original.length > 0) parts.push(s.original.join('\n'));
-    if (s.translation.length > 0) parts.push(s.translation.join('\n'));
-    return parts.join('\n\n');
-  }).join('\n\n');
-  return new File([text], filename, { type: 'text/plain' });
 }
 
 // Convert lyrics API data into ClientSong[] for display
@@ -79,7 +71,12 @@ export default function App() {
   const [loadingSongs, setLoadingSongs] = useState(!!initialServiceId);
   const [loadingVersion, setLoadingVersion] = useState<number | null>(null);
   const [previewVersion, setPreviewVersion] = useState<number | null>(null);
+  const [restored, setRestored] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const savedSongsRef = useRef<ClientSong[] | null>(null);
+
+  // Mark the working set as edited so it gets persisted as a local draft
+  const touch = () => setDirty(true);
 
   const handlePreviewVersion = async (version: number) => {
     if (!svc) return;
@@ -103,6 +100,7 @@ export default function App() {
     savedSongsRef.current = null;
     setPreviewVersion(null);
     setPublished(null);
+    touch();
   };
 
   const handleCancelPreview = () => {
@@ -143,9 +141,19 @@ export default function App() {
       });
   }, []);
 
-  // Load existing songs when entering a published service
+  // Load songs when entering a service: restore any locally-saved draft first,
+  // otherwise fetch the published version from the server.
   useEffect(() => {
     if (view !== 'editor' || !svc) return;
+    setRestored(false);
+    setDirty(false);
+    const draft = loadDraft(svc.id);
+    if (draft && draft.songs.length > 0) {
+      setSongs(draftToSongs(draft));
+      setRestored(true);
+      setLoadingSongs(false);
+      return;
+    }
     if (svc.current_version === 0) { setLoadingSongs(false); return; }
     setLoadingSongs(true);
     fetchLyrics(svc.id, svc.current_version)
@@ -153,6 +161,27 @@ export default function App() {
       .catch(console.error)
       .finally(() => setLoadingSongs(false));
   }, [view, svc?.id]);
+
+  // Persist edits to localStorage so a refresh or leaving mid-edit doesn't lose work
+  useEffect(() => {
+    if (view !== 'editor' || !svc || !dirty) return;
+    if (previewVersion !== null) return; // don't overwrite the draft while previewing history
+    if (songs.length === 0) { removeDraft(svc.id); return; }
+    saveDraft(svc.id, svc.current_version, songs, Date.now());
+  }, [songs, dirty, view, svc?.id, svc?.current_version, previewVersion]);
+
+  const discardDraft = () => {
+    if (!svc) return;
+    removeDraft(svc.id);
+    setRestored(false);
+    setDirty(false);
+    if (svc.current_version === 0) { setSongs([]); return; }
+    setLoadingSongs(true);
+    fetchLyrics(svc.id, svc.current_version)
+      .then(lyrics => setSongs(lyricsToSongs(lyrics)))
+      .catch(console.error)
+      .finally(() => setLoadingSongs(false));
+  };
 
   // Handle browser back/forward
   const onPopState = useCallback(() => {
@@ -239,12 +268,44 @@ export default function App() {
           <SuccessBanner result={published} mobile={mob} />
         )}
 
+        {restored && !published && (
+          <div style={{
+            background: T.primaryLight, border: `1px solid ${T.primaryMedium}`, borderRadius: 12,
+            padding: mob ? "11px 12px" : "12px 16px", marginBottom: 18,
+            display: "flex", alignItems: "center", gap: 10,
+            animation: "sd .3s cubic-bezier(.16,1,.3,1)",
+          }}>
+            <span style={{ color: T.primary, flexShrink: 0, display: "flex" }}><I.History s={15} /></span>
+            <div style={{ flex: 1, fontSize: 12.5, color: T.primaryText, lineHeight: 1.4 }}>
+              Restored your unsaved changes from this device.
+            </div>
+            <button
+              onClick={discardDraft}
+              style={{
+                flexShrink: 0, padding: "5px 11px", borderRadius: 7,
+                border: `1px solid ${T.primaryMedium}`, background: T.surface,
+                color: T.primaryText, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: font,
+              }}
+            >Discard</button>
+            <button
+              onClick={() => setRestored(false)}
+              aria-label="Dismiss"
+              style={{
+                flexShrink: 0, width: 24, height: 24, borderRadius: "50%", border: "none",
+                background: "transparent", color: T.textMuted, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+              }}
+            ><I.X s={13} /></button>
+          </div>
+        )}
+
         {loadingSongs ? (
           <div style={{ textAlign: "center", padding: 40, color: T.textMuted, fontSize: 13 }}>Loading songs...</div>
         ) : (
           <DropZone
             songs={songs}
             onSongsChange={newSongs => {
+              touch();
               setFade(false);
               setTimeout(() => { setSongs(newSongs); setFade(true); }, 50);
             }}
@@ -262,9 +323,10 @@ export default function App() {
             serviceId={svc?.id ?? null}
             version={published ? published.version : (svc?.current_version ?? 0)}
             onExpand={setExp}
-            onRemove={i => setSongs(songs.filter((_, j) => j !== i))}
+            onRemove={i => { touch(); setSongs(songs.filter((_, j) => j !== i)); }}
             onMove={(from, to) => {
               if (to < 0 || to >= songs.length) return;
+              touch();
               setSongs(prev => {
                 const updated = [...prev];
                 const [moved] = updated.splice(from, 1);
@@ -285,10 +347,12 @@ export default function App() {
               setPublished(null);
             }}
             onSectionChange={(songIdx, section) => {
+              touch();
               setSongs(prev => prev.map((song, i) => i === songIdx ? { ...song, section: section || undefined } : song));
             }}
             onFullscreen={(songIdx, slideIdx) => setFs({ slides: songs[songIdx].slides, start: slideIdx, songIndex: songIdx })}
             onSlideInsert={(songIdx, afterSlideIdx) => {
+              touch();
               setSongs(prev => prev.map((song, si) => {
                 if (si !== songIdx) return song;
                 const newSlides = [...song.slides];
@@ -298,6 +362,7 @@ export default function App() {
               setPublished(null);
             }}
             onSlideDelete={(songIdx, slideIdx) => {
+              touch();
               setSongs(prev => prev.map((song, si) => {
                 if (si !== songIdx || song.slides.length <= 1) return song;
                 const newSlides = song.slides.filter((_, j) => j !== slideIdx);
@@ -326,6 +391,10 @@ export default function App() {
             onPublished={result => {
               setModal(false);
               setPublished(result);
+              // Work is saved on the server now — clear the local draft
+              if (svc) removeDraft(svc.id);
+              setRestored(false);
+              setDirty(false);
               if (svc) setSvc({ ...svc, current_version: result.version });
             }}
           />
@@ -339,6 +408,7 @@ export default function App() {
           editable={fs.songIndex !== undefined}
           onClose={(editedSlides) => {
             if (editedSlides && fs.songIndex !== undefined) {
+              touch();
               setSongs(prev => prev.map((song, idx) => {
                 if (idx !== fs.songIndex) return song;
                 return {

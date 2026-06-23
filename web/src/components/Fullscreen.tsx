@@ -161,6 +161,46 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   const slidesRef = useRef(slides);
   const dirtyRef = useRef(dirty);
 
+  // Undo/redo history — snapshots of the full slide set taken before each edit
+  type SlideSnap = { original: string[]; translation: string[]; origPt: number; transPt: number };
+  const cloneSlides = (sl: SlideSnap[]): SlideSnap[] =>
+    sl.map(s => ({ original: [...s.original], translation: [...s.translation], origPt: s.origPt, transPt: s.transPt }));
+  const undoRef = useRef<SlideSnap[][]>([]);
+  const redoRef = useRef<SlideSnap[][]>([]);
+  const [, bumpHist] = useState(0);
+
+  // Snapshot the current slides onto the undo stack before a mutation
+  const pushHistory = () => {
+    undoRef.current.push(cloneSlides(slidesRef.current));
+    if (undoRef.current.length > 100) undoRef.current.shift();
+    redoRef.current = [];
+    bumpHist(v => v + 1);
+  };
+
+  const applySnapshot = (snap: SlideSnap[]) => {
+    slidesRef.current = snap;
+    setSlides(snap);
+    setI(ci => Math.min(ci, snap.length - 1));
+    setDirty(true); dirtyRef.current = true;
+    bumpHist(v => v + 1);
+  };
+
+  const undo = () => {
+    if (undoRef.current.length === 0) return;
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+    setActiveField(null);
+    redoRef.current.push(cloneSlides(slidesRef.current));
+    applySnapshot(undoRef.current.pop()!);
+  };
+
+  const redo = () => {
+    if (redoRef.current.length === 0) return;
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+    setActiveField(null);
+    undoRef.current.push(cloneSlides(slidesRef.current));
+    applySnapshot(redoRef.current.pop()!);
+  };
+
   useEffect(() => {
     const h = () => setVw(window.innerWidth);
     window.addEventListener("resize", h);
@@ -189,6 +229,10 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   const markDirty = () => { setDirty(true); dirtyRef.current = true; };
 
   const updateField = useCallback((field: 'original' | 'translation', lines: string[]) => {
+    // Skip if the text is unchanged (blur fires even when nothing was edited)
+    const cur = slidesRef.current[i];
+    if (cur && cur[field].length === lines.length && cur[field].every((l, k) => l === lines[k])) return;
+    pushHistory();
     setSlides(prev => {
       const idx = i;
       const updated = prev.map((sl, si) => si !== idx ? sl : { ...sl, [field]: lines });
@@ -200,6 +244,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
 
   const deleteSlide = (idx: number) => {
     if (slides.length <= 1) return;
+    pushHistory();
     setSlides(prev => {
       const updated = prev.filter((_, si) => si !== idx);
       slidesRef.current = updated;
@@ -210,6 +255,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   };
 
   const insertSlide = (afterIdx: number) => {
+    pushHistory();
     setSlides(prev => {
       const empty = { original: [] as string[], translation: [] as string[], origPt: 120, transPt: 100 };
       const updated = [...prev.slice(0, afterIdx + 1), empty, ...prev.slice(afterIdx + 1)];
@@ -223,6 +269,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
 
   const reorderSlide = (from: number, to: number) => {
     if (from === to) return;
+    pushHistory();
     setSlides(prev => {
       const updated = [...prev];
       const [moved] = updated.splice(from, 1);
@@ -292,6 +339,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
+      // While actively typing in a field, let the browser handle native text undo
       if (isEditing && e.key !== "Escape") return;
       if (e.key === "Escape") {
         if (isEditing) {
@@ -300,6 +348,16 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         } else {
           handleClose();
         }
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
         return;
       }
       if (e.key === "ArrowRight") goToSlide(Math.min(slides.length - 1, i + 1));
@@ -328,6 +386,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   const clampPt = (v: number) => Math.max(20, Math.min(300, Math.round(v)));
 
   const setOrigPt = (v: number) => {
+    pushHistory();
     setSlides(prev => {
       const updated = prev.map((sl, si) => si !== i ? sl : { ...sl, origPt: v });
       slidesRef.current = updated;
@@ -337,6 +396,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   };
 
   const setTransPt = (v: number) => {
+    pushHistory();
     setSlides(prev => {
       const updated = prev.map((sl, si) => si !== i ? sl : { ...sl, transPt: v });
       slidesRef.current = updated;
@@ -382,8 +442,35 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         position: "absolute", top: mobile ? 12 : 20, left: mobile ? 12 : 20, right: mobile ? 12 : 20,
         display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 2,
       }}>
-        <div style={{ fontFamily: fontMono, fontSize: 12, color: "rgba(255,255,255,0.35)" }}>
-          {i + 1} / {slides.length}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ fontFamily: fontMono, fontSize: 12, color: "rgba(255,255,255,0.35)" }}>
+            {i + 1} / {slides.length}
+          </div>
+          {editable && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <button
+                onClick={undo}
+                disabled={undoRef.current.length === 0}
+                title="Undo (Cmd/Ctrl+Z)"
+                style={{
+                  ...pill(), width: 32, height: 32,
+                  opacity: undoRef.current.length === 0 ? 0.3 : 1,
+                  cursor: undoRef.current.length === 0 ? "default" : "pointer",
+                }}
+              ><I.Undo s={14} /></button>
+              <button
+                onClick={redo}
+                disabled={redoRef.current.length === 0}
+                title="Redo (Cmd/Ctrl+Shift+Z)"
+                style={{
+                  ...pill(), width: 32, height: 32,
+                  opacity: redoRef.current.length === 0 ? 0.3 : 1,
+                  cursor: redoRef.current.length === 0 ? "default" : "pointer",
+                  transform: "scaleX(-1)",
+                }}
+              ><I.Undo s={14} /></button>
+            </div>
+          )}
         </div>
         <button onClick={handleClose} style={pill()}><I.X s={15} /></button>
       </div>
