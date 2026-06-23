@@ -12,6 +12,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -83,14 +84,23 @@ fn save_state(path: &Path, state: &BTreeMap<String, String>) -> Result<(), Box<d
     Ok(())
 }
 
-fn get_string(url: &str) -> Result<String, Box<dyn Error>> {
-    Ok(ureq::get(url).call()?.into_string()?)
+fn get_string(agent: &ureq::Agent, url: &str) -> Result<String, Box<dyn Error>> {
+    Ok(agent.get(url).call()?.into_string()?)
 }
 
-fn download(url: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+fn download(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut buf = Vec::new();
-    ureq::get(url).call()?.into_reader().read_to_end(&mut buf)?;
+    agent.get(url).call()?.into_reader().read_to_end(&mut buf)?;
     Ok(buf)
+}
+
+/// Write atomically: stage to a temp file, then rename into place, so a reader
+/// (ProPresenter, or the operator) never sees a half-downloaded bundle.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
+    let tmp = path.with_extension("proBundle.part");
+    fs::write(&tmp, bytes)?;
+    fs::rename(&tmp, path)?;
+    Ok(())
 }
 
 fn notify(title: &str, msg: &str) {
@@ -103,7 +113,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cfg = config();
     fs::create_dir_all(&cfg.dest)?;
 
-    let body = get_string(&format!("{}/api/services", cfg.api))?;
+    // Bounded timeouts so a flaky church network can never hang a run
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout(Duration::from_secs(120))
+        .build();
+
+    let body = get_string(&agent, &format!("{}/api/services", cfg.api))?;
     let resp: ServicesResp = serde_json::from_str(&body)?;
 
     let mut state = load_state(&cfg.state_file);
@@ -127,7 +143,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(&folder)?;
 
         let url = format!("{}/api/services/{}/latest/download", cfg.api, svc.id);
-        let bytes = match download(&url) {
+        let bytes = match download(&agent, &url) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("[txt2pro-sync] download failed for {} ({}): {}", title, svc.id, e);
@@ -136,9 +152,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         };
 
         let versioned = folder.join(format!("{}_v{}.proBundle", date, svc.current_version));
-        fs::write(&versioned, &bytes)?;
+        write_atomic(&versioned, &bytes)?;
         // A stable filename always pointing at the newest bundle for this service
-        fs::write(folder.join("current.proBundle"), &bytes)?;
+        write_atomic(&folder.join("current.proBundle"), &bytes)?;
 
         state.insert(svc.id.clone(), checksum.to_string());
         downloaded.push(format!("{} v{}", title, svc.current_version));

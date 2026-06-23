@@ -7,6 +7,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 launchctl unload "$PLIST" 2>/dev/null || true
 rm -f "$PLIST"
+rm -f "$HOME/Desktop/Sync txt2pro.command"
 
 echo "✓ Removed $LABEL."
 echo "  Downloaded bundles and the binary were left in place."

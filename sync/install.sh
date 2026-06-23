@@ -13,8 +13,8 @@ LOG="$HOME/Library/Logs/txt2pro-sync.log"
 # ---- configuration (override by exporting before running) -------------------
 API="${TXT2PRO_API:-https://txt2pro.sft-church.workers.dev}"
 DEST="${TXT2PRO_DEST:-$HOME/Documents/txt2pro}"
-OPEN="${TXT2PRO_OPEN:-0}"        # 1 = open each new bundle in ProPresenter
-INTERVAL="${TXT2PRO_INTERVAL:-120}"  # seconds between checks while logged in
+OPEN="${TXT2PRO_OPEN:-0}"        # 1 = background agent opens each new bundle in ProPresenter
+INTERVAL="${TXT2PRO_INTERVAL:-60}"   # seconds between checks while logged in
 # -----------------------------------------------------------------------------
 
 if ! command -v cargo >/dev/null 2>&1; then
@@ -56,11 +56,24 @@ echo "Loading…"
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load -w "$PLIST"
 
+# Double-clickable "pull latest right now" button on the Desktop. It always
+# opens the new bundle in ProPresenter (TXT2PRO_OPEN=1) for an immediate
+# one-click import — handy if you re-publish mid-service.
+BUTTON="$HOME/Desktop/Sync txt2pro.command"
+cat > "$BUTTON" <<BTNEOF
+#!/usr/bin/env bash
+echo "Pulling latest bundles…"
+TXT2PRO_OPEN=1 TXT2PRO_API="$API" TXT2PRO_DEST="$DEST" "$BIN"
+echo "Done — you can close this window."
+BTNEOF
+chmod +x "$BUTTON"
+
 echo ""
 echo "✓ Installed."
 echo "  Bundles sync to : $DEST/<service>/"
 echo "  Checks every    : ${INTERVAL}s  (+ on every login/boot)"
 echo "  Logs            : $LOG"
 echo "  Open in PP       : $([ "$OPEN" = 1 ] && echo yes || echo no)  (set TXT2PRO_OPEN=1 and re-run to enable)"
+echo "  Manual sync      : double-click \"Sync txt2pro\" on the Desktop"
 echo ""
 echo "Run a check right now:  \"$BIN\""

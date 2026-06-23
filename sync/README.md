@@ -15,12 +15,21 @@ changed, and posts a macOS notification when it does.
 1. `GET /api/services` — the list of services with their latest `checksum`.
 2. For any service whose checksum differs from the last sync, download
    `GET /api/services/<id>/latest/download`.
-3. Save it to `~/Documents/txt2pro/<Service Title>/`:
+3. Save it (atomically — staged to a `.part` file then renamed, so ProPresenter
+   never sees a half-written bundle) to `~/Documents/txt2pro/<Service Title>/`:
    - `<date>_v<version>.proBundle` — the versioned copy (history)
    - `current.proBundle` — always the newest, stable path
 4. Record the new checksum in a state file and show a notification.
 
-No website changes are needed — these endpoints already exist.
+HTTP calls have bounded timeouts (10s connect / 120s total) so a flaky network
+can't hang a run. No website changes are needed — these endpoints already exist.
+
+## "Sync now" button (mid-service refetch)
+
+`install.sh` drops a double-clickable **`Sync txt2pro.command`** on the Desktop.
+Double-click it to pull the latest bundles immediately instead of waiting for the
+next interval — it also **opens each new bundle in ProPresenter** for a one-click
+import. Use it if you re-publish a change during setup or mid-service.
 
 ## Install
 
@@ -44,7 +53,7 @@ the LaunchAgent):
 |-------------------|--------------------------------------------------|-------------------------------------------|
 | `TXT2PRO_API`     | `https://txt2pro.sft-church.workers.dev`         | API base URL                              |
 | `TXT2PRO_DEST`    | `~/Documents/txt2pro`                            | Where bundles are mirrored                |
-| `TXT2PRO_INTERVAL`| `120`                                            | Seconds between checks while logged in    |
+| `TXT2PRO_INTERVAL`| `60`                                             | Seconds between checks while logged in    |
 | `TXT2PRO_OPEN`    | `0`                                              | `1` = open each new bundle in ProPresenter for one-click import |
 
 Example — enable auto-open and check every 60s:
