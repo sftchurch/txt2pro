@@ -14,7 +14,18 @@
         document.body && (document.body.style.background = bg, document.body.style.color = fg);
       })();
     </script>
-    <style>body{background:#f7f7f8}@media(prefers-color-scheme:dark){body{background:#0e0f13}}</style>
+    <style>
+      body{background:#f7f7f8}@media(prefers-color-scheme:dark){body{background:#0e0f13}}
+      /* Self-hosted so slide previews measure the same font ProPresenter renders,
+         regardless of what's installed on the viewer's machine */
+      @font-face{
+        font-family:'Linux Biolinum';
+        src:url('/fonts/LinBiolinum_R.woff2') format('woff2');
+        font-weight:400;
+        font-style:normal;
+        font-display:swap;
+      }
+    </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body>

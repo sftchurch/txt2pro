@@ -2,14 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { I } from './Icons';
 import { T, font, fontMono } from '../theme';
 import type { ClientSlide } from '../lib/types';
-
-const proFont = `'Linux Biolinum', 'Linux Libertine', Georgia, serif`;
-const transColor = "rgb(231, 142, 36)";
-
-const origTop = (51.405 / 1080) * 100;
-const origHeight = (401.233 / 1080) * 100;
-const transTop = (452.638 / 1080) * 100;
-const transHeight = (627.362 / 1080) * 100;
+import { CanvasLayer, SlideBox, slideTextStyle, transColor } from './SlideCanvas';
 
 const pill = (active?: boolean): React.CSSProperties => ({
   width: 36, height: 36, borderRadius: "50%",
@@ -36,12 +29,11 @@ const spinnerCSS = `
 `;
 
 /** Single contentEditable block per field — natural text editing with line breaks */
-function EditableBlock({ lines, field, color, fontSize, fontWeight, editable, onUpdate, onLive, onFieldFocus, onFieldBlur }: {
+function EditableBlock({ lines, field, color, fontSize, editable, onUpdate, onLive, onFieldFocus, onFieldBlur }: {
   lines: string[];
   field: 'original' | 'translation';
   color: string;
   fontSize: number;
-  fontWeight: number;
   editable?: boolean;
   onUpdate: (field: 'original' | 'translation', lines: string[]) => void;
   onLive: (field: 'original' | 'translation', lines: string[]) => void;
@@ -100,9 +92,8 @@ function EditableBlock({ lines, field, color, fontSize, fontWeight, editable, on
         onFieldBlur();
       }}
       style={{
-        color, fontSize, fontWeight, textAlign: "center",
-        fontFamily: proFont, lineHeight: 1.3, outline: "none",
-        whiteSpace: "pre-wrap", wordBreak: "break-word",
+        ...slideTextStyle(color, fontSize),
+        outline: "none",
         caretColor: editable ? "currentColor" : undefined,
         cursor: editable ? "text" : undefined,
         opacity: isEmpty && !editable ? 0 : undefined,
@@ -225,15 +216,24 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   const transPt = s.transPt;
 
   const slideW = mobile ? vw - 24 : Math.min(vw * 0.82, 960);
-  const slideH = slideW * 9 / 16;
 
-  // Clamp font size so text fits within its container
-  const origBoxH = slideH * origHeight / 100;
-  const transBoxH = slideH * transHeight / 100;
-  const origLines = Math.max(s.original.length, 1);
-  const transLines = Math.max(s.translation.length, 1);
-  const origFontPx = Math.min(slideH * (origPt / 1080) * 0.9, origBoxH / (origLines * 1.35));
-  const transFontPx = Math.min(slideH * (transPt / 1080) * 0.9, transBoxH / (transLines * 1.35));
+  // Text lays out on the shared 1920×1080 canvas (font px = pt, exactly like the
+  // export, scale_behavior NONE — oversize text clips, never shrinks); the whole
+  // canvas is then scaled to slideW for display
+
+  // Flag boxes whose text overruns vertically (it will be cut off in ProPresenter)
+  const origBoxRef = useRef<HTMLDivElement>(null);
+  const transBoxRef = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState({ orig: false, trans: false });
+  useEffect(() => {
+    const check = () => setOverflow({
+      orig: !!origBoxRef.current && origBoxRef.current.scrollHeight > origBoxRef.current.clientHeight + 1,
+      trans: !!transBoxRef.current && transBoxRef.current.scrollHeight > transBoxRef.current.clientHeight + 1,
+    });
+    check();
+    // Re-check once the webfont is in — metrics change wrap and content height
+    document.fonts?.ready.then(check);
+  }, [i, slides, origPt, transPt]);
 
   const markDirty = () => { setDirty(true); dirtyRef.current = true; };
 
@@ -565,7 +565,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         onMouseEnter={() => { if (!mobile && editable) setShowDeleteBtn(true); }}
         onMouseLeave={() => setShowDeleteBtn(false)}
         style={{
-          width: mobile ? "calc(100vw - 24px)" : "min(82vw,960px)",
+          width: slideW,
           aspectRatio: "16/9", background: "#000", borderRadius: mobile ? 12 : 16,
           position: "relative", overflow: "hidden",
           boxShadow: "0 20px 60px rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.06)",
@@ -594,50 +594,52 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
           )
         )}
 
-        <div style={{
-          position: "absolute", left: 0, right: 0,
-          top: `${origTop}%`, height: `${origHeight}%`,
-          display: "flex", flexDirection: "column", alignItems: "stretch", justifyContent: "flex-start",
-          padding: `0 ${slideW * 0.031}px`, overflow: "hidden",
-          border: editable && s.original.length === 0 ? '1px dashed rgba(255,255,255,0.15)' : 'none',
-          borderRadius: 4,
-        }}>
-          <EditableBlock
-            key={`${i}-original`}
-            lines={s.original}
-            field="original"
-            color="#fff"
-            fontSize={origFontPx}
-            fontWeight={400}
-            editable={editable}
-            onUpdate={updateField}
-            onLive={liveEdit}
-            onFieldFocus={handleFieldFocus}
-            onFieldBlur={handleFieldBlur}
-          />
-        </div>
-        <div style={{
-          position: "absolute", left: 0, right: 0,
-          top: `${transTop}%`, height: `${transHeight}%`,
-          display: "flex", flexDirection: "column", alignItems: "stretch", justifyContent: "flex-start",
-          padding: `0 ${slideW * 0.031}px`, overflow: "hidden",
-          border: editable && s.translation.length === 0 ? '1px dashed rgba(255,255,255,0.15)' : 'none',
-          borderRadius: 4,
-        }}>
-          <EditableBlock
-            key={`${i}-translation`}
-            lines={s.translation}
-            field="translation"
-            color={transColor}
-            fontSize={transFontPx}
-            fontWeight={400}
-            editable={editable}
-            onUpdate={updateField}
-            onLive={liveEdit}
-            onFieldFocus={handleFieldFocus}
-            onFieldBlur={handleFieldBlur}
-          />
-        </div>
+        <CanvasLayer width={slideW}>
+          <SlideBox
+            ref={origBoxRef}
+            region="original"
+            border={editable && s.original.length === 0 ? '2px dashed rgba(255,255,255,0.15)' : undefined}
+          >
+            {overflow.orig && <div title="Text exceeds its box and will be cut off in ProPresenter" style={{
+              position: "absolute", left: 0, right: 0, bottom: 0, height: 4,
+              background: "rgba(255,70,70,0.8)", zIndex: 1,
+            }} />}
+            <EditableBlock
+              key={`${i}-original`}
+              lines={s.original}
+              field="original"
+              color="#fff"
+              fontSize={origPt}
+              editable={editable}
+              onUpdate={updateField}
+              onLive={liveEdit}
+              onFieldFocus={handleFieldFocus}
+              onFieldBlur={handleFieldBlur}
+            />
+          </SlideBox>
+          <SlideBox
+            ref={transBoxRef}
+            region="translation"
+            border={editable && s.translation.length === 0 ? '2px dashed rgba(255,255,255,0.15)' : undefined}
+          >
+            {overflow.trans && <div title="Text exceeds its box and will be cut off in ProPresenter" style={{
+              position: "absolute", left: 0, right: 0, bottom: 0, height: 4,
+              background: "rgba(255,70,70,0.8)", zIndex: 1,
+            }} />}
+            <EditableBlock
+              key={`${i}-translation`}
+              lines={s.translation}
+              field="translation"
+              color={transColor}
+              fontSize={transPt}
+              editable={editable}
+              onUpdate={updateField}
+              onLive={liveEdit}
+              onFieldFocus={handleFieldFocus}
+              onFieldBlur={handleFieldBlur}
+            />
+          </SlideBox>
+        </CanvasLayer>
       </div>
 
       {/* Slide filmstrip — draggable numbered chips */}
