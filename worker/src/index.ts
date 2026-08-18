@@ -382,6 +382,17 @@ route('GET', '/api/calendar', async (_request, env) => {
 
   const events: { date: string; title: string; time: string }[] = [];
 
+  // Timely publishes UTC timestamps with no TZID; render in the church's zone
+  const centralFmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+
   for (const block of blocks) {
     const raw = block.split('END:VEVENT')[0];
     // Unfold ICS continuation lines (RFC 5545 §3.1)
@@ -408,8 +419,22 @@ route('GET', '/api/calendar', async (_request, env) => {
     if (dtstart.length === 8) {
       date = toDate(dtstart);
       time = 'All day';
+    } else if (dtstart.endsWith('Z')) {
+      // UTC: YYYYMMDDTHHMMSSZ — convert, since midnight UTC can be the prior local day
+      const utc = new Date(Date.UTC(
+        +dtstart.slice(0, 4),
+        +dtstart.slice(4, 6) - 1,
+        +dtstart.slice(6, 8),
+        +dtstart.slice(9, 11),
+        +dtstart.slice(11, 13),
+      ));
+      const parts = Object.fromEntries(
+        centralFmt.formatToParts(utc).map((p) => [p.type, p.value]),
+      );
+      date = `${parts.year}-${parts.month}-${parts.day}`;
+      time = `${parts.hour}:${parts.minute} ${parts.dayPeriod}`;
     } else {
-      // Timed: YYYYMMDDTHHMMSS or YYYYMMDDTHHMMSSZ
+      // Local/floating: YYYYMMDDTHHMMSS
       date = toDate(dtstart);
       const hh = parseInt(dtstart.slice(9, 11), 10);
       const mm = dtstart.slice(11, 13);

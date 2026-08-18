@@ -11,7 +11,7 @@
     }
   ],
   "vars": {
-    "ICAL_URL": "https://calendar.planningcenteronline.com/icals/REDACTED"
+    "ICAL_URL": "https://app.timelychurch.com/c/solid-foundation-texas/calendar.ics"
   },
   "d1_databases": [
     {
