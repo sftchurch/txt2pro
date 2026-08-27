@@ -2,3 +2,7 @@ node_modules/
 proto/
 *.pro
 dist/
+.DS_Store
+*.proBundle
+*.tsbuildinfo
+.wrangler/
