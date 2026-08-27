@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
-import type { ParsedSong, SlideTemplate, TextStyle } from './types.js';
+import type { ParsedSong, SlideTemplateDef, TextStyle } from './types.js';
 import { buildRtf } from './rtf-build.js';
-import { DEFAULT_TEMPLATE, LAYOUT } from './template.js';
+import { TEMPLATES, sectionColor, isSectionLabel } from './templates.js';
 // @ts-ignore - generated static protobuf module
 import { rv } from './proto-static.js';
 
@@ -39,6 +39,7 @@ function makeSlideElement(
   height: number,
   rtfData: Uint8Array,
   style: TextStyle,
+  verticalAlignment: number = 0,
 ): Record<string, unknown> {
   return {
     data_links: [],
@@ -142,7 +143,7 @@ function makeSlideElement(
           enable: true,
         },
         rtf_data: rtfData,
-        vertical_alignment: 0, // TOP
+        vertical_alignment: verticalAlignment,
         scale_behavior: 0, // NONE
         margins: { left: 0, right: 0, top: 0, bottom: 0 },
         is_superscript_standardized: true,
@@ -183,56 +184,75 @@ function makeSlideElement(
   };
 }
 
+interface CueGroupAccum {
+  name: string;
+  color: { red: number; green: number; blue: number; alpha: number } | null;
+  cueIds: { string: string }[];
+}
+
 export function generatePresentation(
   songs: ParsedSong[],
-  template: SlideTemplate = DEFAULT_TEMPLATE,
+  template: SlideTemplateDef = TEMPLATES.main,
 ): Uint8Array {
   // Presentation is imported from static proto module
 
   const presentationUuid = uuid();
   const cues: Record<string, unknown>[] = [];
-  const allCueIds: { string: string }[] = [];
+  const groups: CueGroupAccum[] = [];
+
+  // The single-group mode always emits its group, even with zero slides —
+  // matching the pre-template generator's output exactly
+  if (!template.groupBySection) {
+    groups.push({ name: '', color: null, cueIds: [] });
+  }
 
   for (const song of songs) {
+    // Section groups never span songs — each song starts a fresh group
+    let currentGroup: CueGroupAccum | null = null;
+
     for (const slide of song.slides) {
       const cueUuid = uuid();
-      allCueIds.push(cueUuid);
 
-      // Build RTF data for original and translation text
-      const originalText = slide.originalLines.join('\n');
-      const translationText = slide.translationLines.join('\n');
+      if (template.groupBySection) {
+        if (isSectionLabel(slide.label)) {
+          // A real section label ([Verse 1], [Chorus]…) starts a named, colored group
+          currentGroup = { name: slide.label, color: sectionColor(slide.label), cueIds: [] };
+          groups.push(currentGroup);
+        } else if (!currentGroup) {
+          // Unlabeled slides continue the previous group, or an unnamed one
+          currentGroup = { name: '', color: null, cueIds: [] };
+          groups.push(currentGroup);
+        }
+      } else {
+        currentGroup = groups[0];
+      }
+      currentGroup.cueIds.push(cueUuid);
 
-      // Use per-slide font sizes if available, otherwise use template defaults
-      const origStyle = slide.origPt ? { ...template.original, fontSize: slide.origPt } : template.original;
-      const transStyle = slide.transPt ? { ...template.translation, fontSize: slide.transPt } : template.translation;
-
-      const originalRtf = buildRtf(originalText, origStyle);
-      const translationRtf = buildRtf(translationText, transStyle);
-
-      // Build slide elements — Translated first, then Main (matching template order)
+      // Each template box renders one or more slide fields (youth merges both
+      // into its single full-screen box)
       const elements: Record<string, unknown>[] = [];
+      for (const box of template.boxes) {
+        const text = box.fields
+          .map(f => (f === 'original' ? slide.originalLines : slide.translationLines))
+          .filter(lines => lines.length > 0)
+          .map(lines => lines.join('\n'))
+          .join('\n');
 
-      // Translation element first (element 0)
-      elements.push(makeSlideElement(
-        'Translated',
-        LAYOUT.translation.x,
-        LAYOUT.translation.y,
-        LAYOUT.translation.width,
-        LAYOUT.translation.height,
-        translationRtf,
-        transStyle,
-      ));
+        // Per-slide font-size overrides; a merged box follows the original size
+        const sizeOverride = box.fields.includes('original') ? slide.origPt : slide.transPt;
+        const style = sizeOverride ? { ...box.style, fontSize: sizeOverride } : box.style;
 
-      // Original/Main element second (element 1)
-      elements.push(makeSlideElement(
-        'Main',
-        LAYOUT.original.x,
-        LAYOUT.original.y,
-        LAYOUT.original.width,
-        LAYOUT.original.height,
-        originalRtf,
-        origStyle,
-      ));
+        elements.push(makeSlideElement(
+          box.name,
+          box.x,
+          box.y,
+          box.width,
+          box.height,
+          buildRtf(text, style),
+          style,
+          box.verticalAlignment,
+        ));
+      }
 
       const cue: Record<string, unknown> = {
         uuid: cueUuid,
@@ -285,12 +305,13 @@ export function generatePresentation(
     }
   }
 
-  // Single CueGroup with all cues (matching template — no name, no color)
-  const cueGroup: Record<string, unknown> = {
+  // main: a single unnamed group with every cue; youth: one named, colored
+  // group per section
+  const cueGroups: Record<string, unknown>[] = groups.map(g => ({
     group: {
       uuid: uuid(),
-      name: '',
-      color: null,
+      name: g.name,
+      color: g.color,
       hotKey: {
         code: 0,
         control_identifier: '',
@@ -298,8 +319,8 @@ export function generatePresentation(
       application_group_identifier: null,
       application_group_name: '',
     },
-    cue_identifiers: allCueIds,
-  };
+    cue_identifiers: g.cueIds,
+  }));
 
   const presentationName = songs.map(s => s.title).join(', ');
 
@@ -322,7 +343,7 @@ export function generatePresentation(
     },
     uuid: presentationUuid,
     name: presentationName,
-    cue_groups: [cueGroup],
+    cue_groups: cueGroups,
     cues,
     arrangements: [],
     category: '',

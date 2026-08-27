@@ -15,11 +15,23 @@ changed, and posts a macOS notification when it does.
 1. `GET /api/services` — the list of services with their latest `checksum`.
 2. For any service whose checksum differs from the last sync, download
    `GET /api/services/<id>/latest/download`.
-3. Save it (atomically — staged to a `.part` file then renamed, so ProPresenter
-   never sees a half-written bundle) to `~/Documents/txt2pro/<Service Title>/`:
+3. Save it (atomically — staged in the agent's state dir, then renamed into
+   place, so neither ProPresenter nor iCloud ever sees a half-written bundle;
+   `~/Documents` on the church Mac is iCloud-synced and temp files renamed
+   inside a synced folder can leave Finder showing stale contents) to
+   `~/Documents/txt2pro/<Service Title>/`:
    - `<date>_v<version>.proBundle` — the versioned copy (history)
-   - `current.proBundle` — always the newest, stable path
-4. Record the new checksum in a state file and show a notification.
+   - `current.proBundle` — always the newest, stable path. Recurring titles
+     ("Friday Service") share a folder, so only the newest service of a title
+     (by service date, then publish time) may write it — otherwise a fresh
+     sync could overwrite it with last week's bundle.
+4. Refresh **`~/Desktop/Today's Service/`** (override with `TXT2PRO_TODAY`):
+   always exactly one bundle — the service dated today, else the next
+   upcoming, else the most recent past. On a Friday the Friday bundle stays
+   there even if Sunday's was published later; the interval run flips it
+   automatically when the day changes. This is the folder volunteers open.
+5. Record the new checksum in a state file, write `status.json` (consumed by
+   the SwiftBar menu bar plugin, below) and show a notification.
 
 HTTP calls have bounded timeouts (10s connect / 120s total) so a flaky network
 can't hang a run. No website changes are needed — these endpoints already exist.
@@ -30,6 +42,17 @@ can't hang a run. No website changes are needed — these endpoints already exis
 Double-click it to pull the latest bundles immediately instead of waiting for the
 next interval — it also **opens each new bundle in ProPresenter** for a one-click
 import. Use it if you re-publish a change during setup or mid-service.
+
+## Menu bar status (SwiftBar)
+
+`txt2prosync.30s.py` is a SwiftBar plugin for the church Mac (which already
+runs SwiftBar for the Canva announcements sync). It shows a music-note icon
+(warning triangle if a sync failed or the agent stopped checking), and its
+menu has the last check time, the newest downloaded bundle, **Sync Now**
+(pulls immediately and opens new bundles in ProPresenter), **Open Bundles
+Folder**, and **View Log**. Install it into the SwiftBar plugins folder
+alongside a small wrapper at `~/Library/Scripts/txt2pro-sync-now.sh` that
+runs the agent with `TXT2PRO_OPEN=1`.
 
 ## Install
 

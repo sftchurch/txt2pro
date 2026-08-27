@@ -17,7 +17,7 @@ export function buildRtf(text: string, style: TextStyle): Uint8Array {
 
   let rtf = `{\\rtf1\\ansi\\ansicpg1252\\cocoartf2868\n`;
   rtf += `\\cocoatextscaling0\\cocoaplatform0`;
-  rtf += `{\\fonttbl\\f0\\fnil\\fcharset0 ${style.fontName};}\n`;
+  rtf += `{\\fonttbl\\f0\\fnil\\fcharset${style.charset ?? 0} ${style.fontName};}\n`;
   rtf += `{\\colortbl;\\red255\\green255\\blue255;\\red${r}\\green${g}\\blue${b};}\n`;
   rtf += `{\\*\\expandedcolortbl;;\\cssrgb\\c${cssR}\\c${cssG}\\c${cssB};}\n`;
   rtf += `\\pard\\pardirnatural\\qc\\partightenfactor0\n\n`;

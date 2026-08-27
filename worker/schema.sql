@@ -3,6 +3,7 @@ CREATE TABLE services (
   service_date TEXT NOT NULL,
   title TEXT NOT NULL,
   current_version INTEGER DEFAULT 1,
+  template TEXT NOT NULL DEFAULT 'main',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -14,6 +15,7 @@ CREATE TABLE versions (
   song_count INTEGER NOT NULL,
   checksum TEXT NOT NULL,
   note TEXT DEFAULT '',
+  template TEXT, -- service-level template this version was published with (NULL = main, pre-feature)
   published_at TEXT DEFAULT (datetime('now')),
   UNIQUE(service_id, version)
 );
@@ -24,5 +26,6 @@ CREATE TABLE songs (
   filename TEXT NOT NULL,
   title TEXT NOT NULL,
   slide_count INTEGER NOT NULL,
-  sort_order INTEGER NOT NULL
+  sort_order INTEGER NOT NULL,
+  template TEXT -- per-song override; NULL = inherit the service template
 );

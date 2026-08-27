@@ -18,21 +18,25 @@ export async function fetchService(id: string): Promise<ServiceDetail> {
 export async function publishService(
   title: string,
   date: string,
-  songs: { title: string; filename: string; file: File | null; slides: { original: string[]; translation: string[]; origPt?: number; transPt?: number }[] }[],
+  template: string,
+  songs: { title: string; filename: string; file: File | null; template?: string; slides: { original: string[]; translation: string[]; label?: string; origPt?: number; transPt?: number }[] }[],
   note: string,
 ): Promise<PublishResult> {
   const fd = new FormData();
   fd.append('title', title);
   fd.append('date', date);
+  fd.append('template', template);
   if (note) fd.append('note', note);
 
   // Send structured slide JSON so the worker preserves original/translation positions
   const slidesJson = songs.map(s => ({
     title: s.title,
     filename: s.filename,
+    ...(s.template ? { template: s.template } : {}),
     slides: s.slides.map(sl => ({
       original: sl.original,
       translation: sl.translation,
+      ...(sl.label ? { label: sl.label } : {}),
       ...(sl.origPt ? { origPt: sl.origPt } : {}),
       ...(sl.transPt ? { transPt: sl.transPt } : {}),
     })),
@@ -60,11 +64,11 @@ export function songProUrl(id: string, version: number, index: number): string {
   return `${BASE}/api/services/${id}/v/${version}/songs/${index}/pro`;
 }
 
-export async function createService(title: string, date: string): Promise<{ id: string; service_date: string; title: string; current_version: number }> {
+export async function createService(title: string, date: string, template?: string): Promise<{ id: string; service_date: string; title: string; current_version: number; template?: string | null }> {
   const res = await fetch(`${BASE}/api/services/new`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, date }),
+    body: JSON.stringify({ title, date, ...(template ? { template } : {}) }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Failed to create service' }));

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { I } from './Icons';
 import { T, font, fontMono } from '../theme';
 import type { ClientSlide } from '../lib/types';
-import { CanvasLayer, SlideBox, slideTextStyle, transColor } from './SlideCanvas';
+import { CanvasLayer, SlideBox, slideTextStyle, resolveTemplate, boxColor } from './SlideCanvas';
 
 const pill = (active?: boolean): React.CSSProperties => ({
   width: 36, height: 36, borderRadius: "50%",
@@ -29,11 +29,16 @@ const spinnerCSS = `
 `;
 
 /** Single contentEditable block per field — natural text editing with line breaks */
-function EditableBlock({ lines, field, color, fontSize, editable, onUpdate, onLive, onFieldFocus, onFieldBlur }: {
+function EditableBlock({ lines, field, color, fontSize, fontFamily, lineHeight, ghost, editable, onUpdate, onLive, onFieldFocus, onFieldBlur }: {
   lines: string[];
   field: 'original' | 'translation';
   color: string;
   fontSize: number;
+  fontFamily: string;
+  lineHeight: number;
+  // In a merged single-box template an empty secondary field must take no
+  // vertical space, or it would shift the middle-aligned text off-center
+  ghost?: boolean;
   editable?: boolean;
   onUpdate: (field: 'original' | 'translation', lines: string[]) => void;
   onLive: (field: 'original' | 'translation', lines: string[]) => void;
@@ -67,7 +72,7 @@ function EditableBlock({ lines, field, color, fontSize, editable, onUpdate, onLi
       suppressContentEditableWarning
       data-edit-region
       data-field={field}
-      data-placeholder={isEmpty ? 'true' : undefined}
+      data-placeholder={isEmpty && !ghost ? 'true' : undefined}
       onFocus={() => {
         onFieldFocus(field);
         if (isEmpty && ref.current) {
@@ -92,12 +97,12 @@ function EditableBlock({ lines, field, color, fontSize, editable, onUpdate, onLi
         onFieldBlur();
       }}
       style={{
-        ...slideTextStyle(color, fontSize),
+        ...slideTextStyle(color, fontSize, fontFamily, lineHeight),
         outline: "none",
         caretColor: editable ? "currentColor" : undefined,
         cursor: editable ? "text" : undefined,
         opacity: isEmpty && !editable ? 0 : undefined,
-        minHeight: editable && isEmpty ? '1.3em' : undefined,
+        minHeight: editable && isEmpty && !ghost ? '1.3em' : undefined,
       }}
     />
   );
@@ -124,12 +129,18 @@ function InsertZone({ onClick }: { onClick: () => void }) {
   );
 }
 
+// Editable slide state — pts stay unset until the user touches the controls
+type SlideSnap = { original: string[]; translation: string[]; label?: string; origPt?: number; transPt?: number };
+
 interface FullscreenProps {
   slides: ClientSlide[];
   start: number;
   onClose: (editedSlides?: ClientSlide[]) => void;
   mobile: boolean;
   editable?: boolean;
+  // Slide template for every slide, or per-slide when previewing mixed songs
+  template?: string;
+  perSlideTemplates?: (string | undefined)[];
   // Live autosave: fires when an edit is committed (blur, delete, insert, reorder, font)
   onChange?: (slides: ClientSlide[]) => void;
   // Synchronous flush on refresh / backgrounding — captures the focused, still-being-typed field
@@ -137,14 +148,18 @@ interface FullscreenProps {
   saveStatus?: 'saving' | 'saved' | null;
 }
 
-export function Fullscreen({ slides: initialSlides, start, onClose, mobile, editable, onChange, onFlush, saveStatus }: FullscreenProps) {
+export function Fullscreen({ slides: initialSlides, start, onClose, mobile, editable, template, perSlideTemplates, onChange, onFlush, saveStatus }: FullscreenProps) {
   const [i, setI] = useState(start);
   const [activeField, setActiveField] = useState<'original' | 'translation' | null>(null);
-  const [slides, setSlides] = useState(() => initialSlides.map(s => ({
+  // origPt/transPt stay unset until the user touches the size controls, so the
+  // template's defaults keep applying (and template switches don't inherit
+  // stale sizes)
+  const [slides, setSlides] = useState<SlideSnap[]>(() => initialSlides.map(s => ({
     original: [...s.original],
     translation: [...s.translation],
-    origPt: s.origPt ?? 120,
-    transPt: s.transPt ?? 100,
+    label: s.label,
+    origPt: s.origPt,
+    transPt: s.transPt,
   })));
   const [dirty, setDirty] = useState(false);
   const [showDeleteBtn, setShowDeleteBtn] = useState(false);
@@ -162,9 +177,8 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   const dirtyRef = useRef(dirty);
 
   // Undo/redo history — snapshots of the full slide set taken before each edit
-  type SlideSnap = { original: string[]; translation: string[]; origPt: number; transPt: number };
   const cloneSlides = (sl: SlideSnap[]): SlideSnap[] =>
-    sl.map(s => ({ original: [...s.original], translation: [...s.translation], origPt: s.origPt, transPt: s.transPt }));
+    sl.map(s => ({ original: [...s.original], translation: [...s.translation], label: s.label, origPt: s.origPt, transPt: s.transPt }));
   const undoRef = useRef<SlideSnap[][]>([]);
   const redoRef = useRef<SlideSnap[][]>([]);
   const [, bumpHist] = useState(0);
@@ -212,8 +226,16 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   }, []);
 
   const s = slides[i];
-  const origPt = s.origPt;
-  const transPt = s.transPt;
+
+  // Resolve the slide template: per-slide when previewing across songs,
+  // otherwise the single template for the song being edited
+  const def = resolveTemplate(perSlideTemplates?.[i] ?? template);
+  const origBox = def.boxes.find(b => b.fields.includes('original')) ?? def.boxes[0];
+  const transBox = def.boxes.find(b => !b.fields.includes('original') && b.fields.includes('translation'));
+  const merged = !transBox; // single-box template: translation follows the main size
+
+  const origPt = s.origPt ?? origBox.style.fontSize;
+  const transPt = s.transPt ?? transBox?.style.fontSize ?? origBox.style.fontSize;
 
   const slideW = mobile ? vw - 24 : Math.min(vw * 0.82, 960);
 
@@ -222,18 +244,17 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   // canvas is then scaled to slideW for display
 
   // Flag boxes whose text overruns vertically (it will be cut off in ProPresenter)
-  const origBoxRef = useRef<HTMLDivElement>(null);
-  const transBoxRef = useRef<HTMLDivElement>(null);
-  const [overflow, setOverflow] = useState({ orig: false, trans: false });
+  const boxRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [overflow, setOverflow] = useState<boolean[]>([]);
   useEffect(() => {
-    const check = () => setOverflow({
-      orig: !!origBoxRef.current && origBoxRef.current.scrollHeight > origBoxRef.current.clientHeight + 1,
-      trans: !!transBoxRef.current && transBoxRef.current.scrollHeight > transBoxRef.current.clientHeight + 1,
-    });
+    const check = () => setOverflow(def.boxes.map((_, bi) => {
+      const el = boxRefs.current[bi];
+      return !!el && el.scrollHeight > el.clientHeight + 1;
+    }));
     check();
     // Re-check once the webfont is in — metrics change wrap and content height
     document.fonts?.ready.then(check);
-  }, [i, slides, origPt, transPt]);
+  }, [i, slides, origPt, transPt, def]);
 
   const markDirty = () => { setDirty(true); dirtyRef.current = true; };
 
@@ -309,7 +330,7 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
   const insertSlide = (afterIdx: number) => {
     pushHistory();
     setSlides(prev => {
-      const empty = { original: [] as string[], translation: [] as string[], origPt: 120, transPt: 100 };
+      const empty: SlideSnap = { original: [], translation: [] };
       const updated = [...prev.slice(0, afterIdx + 1), empty, ...prev.slice(afterIdx + 1)];
       slidesRef.current = updated;
       return updated;
@@ -549,8 +570,8 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
           display: "flex", alignItems: "center", justifyContent: "center", gap: 8, zIndex: 3,
           animation: "fi .15s ease",
         }}>
-          {sizeControl("Main", origPt, setOrigPt)}
-          {sizeControl("Trans", transPt, setTransPt)}
+          {sizeControl(merged ? "Size" : "Main", origPt, setOrigPt)}
+          {!merged && sizeControl("Trans", transPt, setTransPt)}
           <button onClick={handleDone} style={{
             height: 28, borderRadius: 14, border: "1px solid rgba(255,255,255,0.15)",
             background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.8)",
@@ -595,50 +616,39 @@ export function Fullscreen({ slides: initialSlides, start, onClose, mobile, edit
         )}
 
         <CanvasLayer width={slideW}>
-          <SlideBox
-            ref={origBoxRef}
-            region="original"
-            border={editable && s.original.length === 0 ? '2px dashed rgba(255,255,255,0.15)' : undefined}
-          >
-            {overflow.orig && <div title="Text exceeds its box and will be cut off in ProPresenter" style={{
-              position: "absolute", left: 0, right: 0, bottom: 0, height: 4,
-              background: "rgba(255,70,70,0.8)", zIndex: 1,
-            }} />}
-            <EditableBlock
-              key={`${i}-original`}
-              lines={s.original}
-              field="original"
-              color="#fff"
-              fontSize={origPt}
-              editable={editable}
-              onUpdate={updateField}
-              onLive={liveEdit}
-              onFieldFocus={handleFieldFocus}
-              onFieldBlur={handleFieldBlur}
-            />
-          </SlideBox>
-          <SlideBox
-            ref={transBoxRef}
-            region="translation"
-            border={editable && s.translation.length === 0 ? '2px dashed rgba(255,255,255,0.15)' : undefined}
-          >
-            {overflow.trans && <div title="Text exceeds its box and will be cut off in ProPresenter" style={{
-              position: "absolute", left: 0, right: 0, bottom: 0, height: 4,
-              background: "rgba(255,70,70,0.8)", zIndex: 1,
-            }} />}
-            <EditableBlock
-              key={`${i}-translation`}
-              lines={s.translation}
-              field="translation"
-              color={transColor}
-              fontSize={transPt}
-              editable={editable}
-              onUpdate={updateField}
-              onLive={liveEdit}
-              onFieldFocus={handleFieldFocus}
-              onFieldBlur={handleFieldBlur}
-            />
-          </SlideBox>
+          {def.boxes.map((box, bi) => {
+            const boxEmpty = box.fields.every(f => (f === 'original' ? s.original : s.translation).length === 0);
+            return (
+              <SlideBox
+                key={box.name}
+                ref={el => { boxRefs.current[bi] = el; }}
+                box={box}
+                border={editable && boxEmpty ? '2px dashed rgba(255,255,255,0.15)' : undefined}
+              >
+                {overflow[bi] && <div title="Text exceeds its box and will be cut off in ProPresenter" style={{
+                  position: "absolute", left: 0, right: 0, bottom: 0, height: 4,
+                  background: "rgba(255,70,70,0.8)", zIndex: 1,
+                }} />}
+                {box.fields.map(field => (
+                  <EditableBlock
+                    key={`${i}-${field}`}
+                    lines={field === 'original' ? s.original : s.translation}
+                    field={field}
+                    color={boxColor(box)}
+                    fontSize={field === 'original' || merged ? origPt : transPt}
+                    fontFamily={box.cssFontStack}
+                    lineHeight={box.previewLineHeight}
+                    ghost={box.fields.length > 1 && field !== 'original'}
+                    editable={editable}
+                    onUpdate={updateField}
+                    onLive={liveEdit}
+                    onFieldFocus={handleFieldFocus}
+                    onFieldBlur={handleFieldBlur}
+                  />
+                ))}
+              </SlideBox>
+            );
+          })}
         </CanvasLayer>
       </div>
 

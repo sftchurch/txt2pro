@@ -3,6 +3,7 @@ export interface Service {
   service_date: string;
   title: string;
   current_version: number;
+  template?: string | null;
   created_at: string;
   checksum: string | null;
   song_count: number | null;
@@ -12,6 +13,7 @@ export interface Service {
 export interface ClientSlide {
   original: string[];
   translation: string[];
+  label?: string;
   origPt?: number;
   transPt?: number;
 }
@@ -25,6 +27,7 @@ export interface ClientSong {
   count: number;
   slides: ClientSlide[];
   section?: string;
+  template?: string; // per-song override; unset = service template
 }
 
 export interface PublishResult {
@@ -58,6 +61,7 @@ export interface ServiceDetail {
     service_date: string;
     title: string;
     current_version: number;
+    template?: string | null;
     created_at: string;
   };
   versions: VersionInfo[];

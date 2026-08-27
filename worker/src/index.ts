@@ -1,6 +1,7 @@
 import { parseSongFile } from '../../src/lib/parser.js';
 import { generatePresentation } from '../../src/lib/generator.js';
 import { createProBundle } from '../../src/lib/bundle.js';
+import { TEMPLATES, isTemplateId, type TemplateId } from '../../src/lib/templates.js';
 
 interface Env {
   BUCKET: R2Bucket;
@@ -61,9 +62,13 @@ route('POST', '/api/services', async (request, env) => {
   const title = formData.get('title') as string | null;
   const serviceDate = formData.get('date') as string | null;
   const note = (formData.get('note') as string) || '';
+  const templateField = formData.get('template') as string | null;
 
   if (!title) return errorResponse('Missing required field: title');
   if (!serviceDate) return errorResponse('Missing required field: date');
+  if (templateField && !isTemplateId(templateField)) {
+    return errorResponse(`Unknown template: ${templateField}`);
+  }
 
   // Check for structured slide data (from edited songs)
   const slidesJson = formData.get('slides_json') as string | null;
@@ -78,19 +83,27 @@ route('POST', '/api/services', async (request, env) => {
   }
 
   let parsedSongs: ReturnType<typeof parseSongFile>[];
+  // Per-song template overrides, parallel to parsedSongs (null = service default)
+  let songTemplates: (TemplateId | null)[];
 
   if (slidesJson) {
     // Use pre-parsed slide data (preserves original/translation positions from edits)
     const structured = JSON.parse(slidesJson) as {
       title: string;
       filename: string;
-      slides: { original: string[]; translation: string[]; origPt?: number; transPt?: number }[];
+      template?: string;
+      slides: { original: string[]; translation: string[]; label?: string; origPt?: number; transPt?: number }[];
     }[];
+    for (const s of structured) {
+      if (s.template && !isTemplateId(s.template)) {
+        return errorResponse(`Unknown template on song "${s.title}": ${s.template}`);
+      }
+    }
     parsedSongs = structured.map(s => ({
       title: s.title,
       filename: s.filename,
       slides: s.slides.map((sl, i) => ({
-        label: `Slide ${i + 1}`,
+        label: sl.label || `Slide ${i + 1}`,
         originalLines: sl.original,
         translationLines: sl.translation,
         origPt: sl.origPt,
@@ -98,26 +111,39 @@ route('POST', '/api/services', async (request, env) => {
       })),
       warnings: [],
     }));
+    songTemplates = structured.map(s => (isTemplateId(s.template) ? s.template : null));
   } else {
     if (songFiles.length === 0) {
       return errorResponse('No song files uploaded. Use field name "songs"');
     }
     // Parse all songs from raw text files
     parsedSongs = songFiles.map(f => parseSongFile(f.content, f.filename));
+    songTemplates = parsedSongs.map(() => null);
   }
 
-  // Generate individual .pro files per song
-  const bundleFiles = parsedSongs.map(song => ({
+  // Check if a service for this date already exists
+  const existing = await env.DB.prepare(
+    'SELECT id, current_version, template FROM services WHERE service_date = ?'
+  ).bind(serviceDate).first<{ id: string; current_version: number; template: string | null }>();
+
+  // Service-level template: explicit field wins, then the stored value, then main
+  const serviceTemplate: TemplateId = isTemplateId(templateField)
+    ? templateField
+    : (isTemplateId(existing?.template) ? existing!.template as TemplateId : 'main');
+
+  // Generate individual .pro files per song, each with its resolved template
+  const bundleFiles = parsedSongs.map((song, i) => ({
     name: song.title,
-    data: generatePresentation([song]),
+    data: generatePresentation([song], TEMPLATES[songTemplates[i] ?? serviceTemplate]),
   }));
   const bundleData = createProBundle(bundleFiles);
   const checksum = await sha256(bundleData);
 
   // Build lyrics JSON
-  const lyricsData = parsedSongs.map(song => ({
+  const lyricsData = parsedSongs.map((song, i) => ({
     title: song.title,
     filename: song.filename,
+    ...(songTemplates[i] ? { template: songTemplates[i] } : {}),
     slides: song.slides.map(s => ({
       label: s.label,
       original: s.originalLines,
@@ -126,11 +152,6 @@ route('POST', '/api/services', async (request, env) => {
       ...(s.transPt ? { transPt: s.transPt } : {}),
     })),
   }));
-
-  // Check if a service for this date already exists
-  const existing = await env.DB.prepare(
-    'SELECT id, current_version FROM services WHERE service_date = ?'
-  ).bind(serviceDate).first<{ id: string; current_version: number }>();
 
   const serviceId = existing ? existing.id : crypto.randomUUID();
   const version = existing ? existing.current_version + 1 : 1;
@@ -152,20 +173,20 @@ route('POST', '/api/services', async (request, env) => {
   if (existing) {
     await env.DB.batch([
       env.DB.prepare(
-        'UPDATE services SET title = ?, current_version = ? WHERE id = ?'
-      ).bind(title, version, serviceId),
+        'UPDATE services SET title = ?, current_version = ?, template = ? WHERE id = ?'
+      ).bind(title, version, serviceTemplate, serviceId),
       env.DB.prepare(
-        'INSERT INTO versions (service_id, version, song_count, checksum, note) VALUES (?, ?, ?, ?, ?)'
-      ).bind(serviceId, version, parsedSongs.length, checksum, note),
+        'INSERT INTO versions (service_id, version, song_count, checksum, note, template) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(serviceId, version, parsedSongs.length, checksum, note, serviceTemplate),
     ]);
   } else {
     await env.DB.batch([
       env.DB.prepare(
-        'INSERT INTO services (id, service_date, title, current_version) VALUES (?, ?, ?, ?)'
-      ).bind(serviceId, serviceDate, title, version),
+        'INSERT INTO services (id, service_date, title, current_version, template) VALUES (?, ?, ?, ?, ?)'
+      ).bind(serviceId, serviceDate, title, version, serviceTemplate),
       env.DB.prepare(
-        'INSERT INTO versions (service_id, version, song_count, checksum, note) VALUES (?, ?, ?, ?, ?)'
-      ).bind(serviceId, version, parsedSongs.length, checksum, note),
+        'INSERT INTO versions (service_id, version, song_count, checksum, note, template) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(serviceId, version, parsedSongs.length, checksum, note, serviceTemplate),
     ]);
   }
 
@@ -178,8 +199,8 @@ route('POST', '/api/services', async (request, env) => {
     await env.DB.batch(
       parsedSongs.map((song, i) =>
         env.DB.prepare(
-          'INSERT INTO songs (version_id, filename, title, slide_count, sort_order) VALUES (?, ?, ?, ?, ?)'
-        ).bind(versionRow.id, song.filename, song.title, song.slides.length, i)
+          'INSERT INTO songs (version_id, filename, title, slide_count, sort_order, template) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(versionRow.id, song.filename, song.title, song.slides.length, i, songTemplates[i])
       )
     );
   }
@@ -195,34 +216,43 @@ route('POST', '/api/services', async (request, env) => {
 
 // POST /api/services/new — Create an empty service (no songs yet)
 route('POST', '/api/services/new', async (request, env) => {
-  const body = await request.json() as { title?: string; date?: string };
+  const body = await request.json() as { title?: string; date?: string; template?: string };
   const title = body.title;
   const serviceDate = body.date;
+  const template = body.template;
 
   if (!title) return errorResponse('Missing required field: title');
   if (!serviceDate) return errorResponse('Missing required field: date');
+  if (template && !isTemplateId(template)) return errorResponse(`Unknown template: ${template}`);
 
   // Check if a service for this date already exists
   const existing = await env.DB.prepare(
-    'SELECT id, service_date, title, current_version FROM services WHERE service_date = ?'
-  ).bind(serviceDate).first<{ id: string; service_date: string; title: string; current_version: number }>();
+    'SELECT id, service_date, title, current_version, template FROM services WHERE service_date = ?'
+  ).bind(serviceDate).first<{ id: string; service_date: string; title: string; current_version: number; template: string | null }>();
 
   if (existing) {
-    return json(existing);
+    // A never-published service can still adopt the requested template;
+    // published ones keep theirs (the caller sees the stored value)
+    if (template && existing.current_version === 0 && template !== existing.template) {
+      await env.DB.prepare('UPDATE services SET template = ? WHERE id = ?').bind(template, existing.id).run();
+      return json({ ...existing, template });
+    }
+    return json({ ...existing, template: existing.template ?? 'main' });
   }
 
   const serviceId = crypto.randomUUID();
+  const svcTemplate = template ?? 'main';
   await env.DB.prepare(
-    'INSERT INTO services (id, service_date, title, current_version) VALUES (?, ?, ?, 0)'
-  ).bind(serviceId, serviceDate, title).run();
+    'INSERT INTO services (id, service_date, title, current_version, template) VALUES (?, ?, ?, 0, ?)'
+  ).bind(serviceId, serviceDate, title, svcTemplate).run();
 
-  return json({ id: serviceId, service_date: serviceDate, title, current_version: 0 }, 201);
+  return json({ id: serviceId, service_date: serviceDate, title, current_version: 0, template: svcTemplate }, 201);
 });
 
 // GET /api/services — List all services
 route('GET', '/api/services', async (_request, env) => {
   const { results } = await env.DB.prepare(
-    `SELECT s.id, s.service_date, s.title, s.current_version, s.created_at,
+    `SELECT s.id, s.service_date, s.title, s.current_version, s.template, s.created_at,
             v.checksum, v.song_count, v.published_at
      FROM services s
      LEFT JOIN versions v ON v.service_id = s.id AND v.version = s.current_version
@@ -279,7 +309,7 @@ route('GET', '/api/services/:id', async (_request, env, params) => {
   const versionsWithSongs = await Promise.all(
     versions.map(async (v) => {
       const { results: songs } = await env.DB.prepare(
-        'SELECT filename, title, slide_count, sort_order FROM songs WHERE version_id = ? ORDER BY sort_order'
+        'SELECT filename, title, slide_count, sort_order, template FROM songs WHERE version_id = ? ORDER BY sort_order'
       ).bind(v.id).all();
       return { ...v, songs };
     })

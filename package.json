@@ -6,7 +6,8 @@
   "scripts": {
     "test:parser": "tsx tests/test-parser.ts",
     "test:e2e": "tsx tests/test-e2e.ts",
-    "test": "tsx tests/test-parser.ts && tsx tests/test-e2e.ts",
+    "test:templates": "tsx tests/test-templates.ts",
+    "test": "tsx tests/test-parser.ts && tsx tests/test-e2e.ts && tsx tests/test-templates.ts",
     "proto:build": "pbjs -t static-module --keep-case --es6 -w es6 -p \"./proto/Proto 19beta\" -o src/lib/proto-static.js \"proto/Proto 19beta/presentation.proto\""
   },
   "dependencies": {

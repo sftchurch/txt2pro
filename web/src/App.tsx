@@ -22,14 +22,17 @@ interface FsState {
   slides: ClientSlide[];
   start: number;
   songIndex?: number;
+  template: string;
+  perSlideTemplates?: string[];
 }
 
 // Convert lyrics API data into ClientSong[] for display
-function lyricsToSongs(lyrics: { title: string; filename: string; slides: { original: string[]; translation: string[]; origPt?: number; transPt?: number }[] }[]): ClientSong[] {
+function lyricsToSongs(lyrics: { title: string; filename: string; template?: string; slides: { original: string[]; translation: string[]; label?: string; origPt?: number; transPt?: number }[] }[]): ClientSong[] {
   return lyrics.map(song => {
     const slides = song.slides.map(s => ({
       original: s.original,
       translation: s.translation,
+      ...(s.label ? { label: s.label } : {}),
       ...(s.origPt ? { origPt: s.origPt } : {}),
       ...(s.transPt ? { transPt: s.transPt } : {}),
     }));
@@ -41,6 +44,7 @@ function lyricsToSongs(lyrics: { title: string; filename: string; slides: { orig
       warn: null,
       count: song.slides.length,
       slides,
+      ...(song.template ? { template: song.template } : {}),
     };
   });
 }
@@ -74,6 +78,7 @@ export default function App() {
   const [restored, setRestored] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<'saving' | 'saved' | null>(null);
+  const [svcTemplate, setSvcTemplate] = useState('main');
   const savedSongsRef = useRef<ClientSong[] | null>(null);
   const songsRef = useRef(songs);
   songsRef.current = songs;
@@ -152,6 +157,7 @@ export default function App() {
     setDirty(false);
     setSaveState(null);
     const draft = loadDraft(svc.id);
+    setSvcTemplate((draft?.serviceTemplate ?? svc.template) || 'main');
     if (draft && draft.songs.length > 0) {
       setSongs(draftToSongs(draft));
       setRestored(true);
@@ -170,19 +176,32 @@ export default function App() {
   useEffect(() => {
     if (view !== 'editor' || !svc || !dirty) return;
     if (previewVersion !== null) return; // don't overwrite the draft while previewing history
-    if (songs.length === 0) { removeDraft(svc.id); setSaveState(null); return; }
+    if (songs.length === 0) {
+      // A template chosen on a still-empty service has nowhere else to live —
+      // keep a songless draft so the choice survives refresh/navigation
+      if (svcTemplate !== (svc.template || 'main')) {
+        setSaveState('saving');
+        saveDraft(svc.id, svc.current_version, [], Date.now(), svcTemplate);
+        const t = setTimeout(() => setSaveState('saved'), 500);
+        return () => clearTimeout(t);
+      }
+      removeDraft(svc.id);
+      setSaveState(null);
+      return;
+    }
     setSaveState('saving');
-    saveDraft(svc.id, svc.current_version, songs, Date.now());
+    saveDraft(svc.id, svc.current_version, songs, Date.now(), svcTemplate);
     // Settle to "saved" once edits stop streaming in (cleared if another edit lands first)
     const t = setTimeout(() => setSaveState('saved'), 500);
     return () => clearTimeout(t);
-  }, [songs, dirty, view, svc?.id, svc?.current_version, previewVersion]);
+  }, [songs, dirty, view, svc?.id, svc?.current_version, previewVersion, svcTemplate]);
 
   const discardDraft = () => {
     if (!svc) return;
     removeDraft(svc.id);
     setRestored(false);
     setDirty(false);
+    setSvcTemplate(svc.template || 'main');
     if (svc.current_version === 0) { setSongs([]); return; }
     setLoadingSongs(true);
     fetchLyrics(svc.id, svc.current_version)
@@ -257,6 +276,8 @@ export default function App() {
           hasSongs={songs.length > 0}
           saveStatus={previewVersion === null ? saveState : null}
           showHistory={showHist}
+          template={svcTemplate}
+          onTemplateChange={t => { setSvcTemplate(t); touch(); setPublished(null); }}
           onBack={() => go(() => { setView('services'); history.pushState(null, '', '/'); })}
           onToggleHistory={() => setShowHist(!showHist)}
         />
@@ -331,6 +352,12 @@ export default function App() {
             fade={fade}
             serviceId={svc?.id ?? null}
             version={published ? published.version : (svc?.current_version ?? 0)}
+            serviceTemplate={svcTemplate}
+            onTemplateChange={(songIdx, template) => {
+              touch();
+              setPublished(null);
+              setSongs(prev => prev.map((song, i) => i === songIdx ? { ...song, template: template || undefined } : song));
+            }}
             onExpand={setExp}
             onRemove={i => { touch(); setSongs(songs.filter((_, j) => j !== i)); }}
             onMove={(from, to) => {
@@ -359,7 +386,12 @@ export default function App() {
               touch();
               setSongs(prev => prev.map((song, i) => i === songIdx ? { ...song, section: section || undefined } : song));
             }}
-            onFullscreen={(songIdx, slideIdx) => setFs({ slides: songs[songIdx].slides, start: slideIdx, songIndex: songIdx })}
+            onFullscreen={(songIdx, slideIdx) => setFs({
+              slides: songs[songIdx].slides,
+              start: slideIdx,
+              songIndex: songIdx,
+              template: songs[songIdx].template ?? svcTemplate,
+            })}
             onSlideInsert={(songIdx, afterSlideIdx) => {
               touch();
               setSongs(prev => prev.map((song, si) => {
@@ -387,7 +419,12 @@ export default function App() {
             songs={songs}
             mobile={mob}
             onPublish={() => setModal(true)}
-            onPreviewAll={() => setFs({ slides: songs.flatMap(s => s.slides), start: 0 })}
+            onPreviewAll={() => setFs({
+              slides: songs.flatMap(s => s.slides),
+              start: 0,
+              template: svcTemplate,
+              perSlideTemplates: songs.flatMap(s => s.slides.map(() => s.template ?? svcTemplate)),
+            })}
           />
         )}
 
@@ -396,6 +433,7 @@ export default function App() {
             service={svc}
             songs={songs}
             mobile={mob}
+            template={svcTemplate}
             onClose={() => setModal(false)}
             onPublished={result => {
               setModal(false);
@@ -405,7 +443,7 @@ export default function App() {
               setRestored(false);
               setDirty(false);
               setSaveState(null);
-              if (svc) setSvc({ ...svc, current_version: result.version });
+              if (svc) setSvc({ ...svc, current_version: result.version, template: svcTemplate });
             }}
           />
         )}
@@ -416,6 +454,8 @@ export default function App() {
           slides={fs.slides}
           start={fs.start}
           editable={fs.songIndex !== undefined}
+          template={fs.template}
+          perSlideTemplates={fs.perSlideTemplates}
           saveStatus={saveState}
           onChange={editedSlides => {
             // Live autosave while the editor is open (commit on blur / structural edit)
@@ -437,7 +477,7 @@ export default function App() {
               slides: editedSlides,
               count: editedSlides.length,
             });
-            saveDraft(svc.id, svc.current_version, updated, Date.now());
+            saveDraft(svc.id, svc.current_version, updated, Date.now(), svcTemplate);
           }}
           onClose={(editedSlides) => {
             if (editedSlides && fs.songIndex !== undefined) {

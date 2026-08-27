@@ -3,6 +3,7 @@ import { I } from './Icons';
 import { Slide } from './Slide';
 import { T, font, fontMono, card, anim } from '../theme';
 import { songProUrl } from '../lib/api';
+import { TEMPLATES, resolveTemplate, isTemplateId } from '@shared/templates';
 import type { ClientSong } from '../lib/types';
 
 const SECTION_COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#ef4444'];
@@ -38,6 +39,7 @@ interface SongListProps {
   fade: boolean;
   serviceId: string | null;
   version: number;
+  serviceTemplate: string;
   onExpand: (index: number | null) => void;
   onRemove: (index: number) => void;
   onMove?: (from: number, to: number) => void;
@@ -45,13 +47,15 @@ interface SongListProps {
   onSlideInsert?: (songIndex: number, afterSlideIndex: number) => void;
   onSlideDelete?: (songIndex: number, slideIndex: number) => void;
   onSectionChange?: (songIndex: number, section: string) => void;
+  onTemplateChange?: (songIndex: number, template: string) => void;
 }
 
-function SlideWithActions({ song, songIndex, slideIndex, mobile, onFullscreen, onSlideDelete }: {
+function SlideWithActions({ song, songIndex, slideIndex, mobile, template, onFullscreen, onSlideDelete }: {
   song: ClientSong;
   songIndex: number;
   slideIndex: number;
   mobile: boolean;
+  template: string;
   onFullscreen: (songIndex: number, slideIndex: number) => void;
   onSlideDelete?: (songIndex: number, slideIndex: number) => void;
 }) {
@@ -85,6 +89,7 @@ function SlideWithActions({ song, songIndex, slideIndex, mobile, onFullscreen, o
         onClick={() => onFullscreen(songIndex, slideIndex)}
         origPt={song.slides[slideIndex].origPt}
         transPt={song.slides[slideIndex].transPt}
+        template={template}
       />
     </div>
   );
@@ -96,9 +101,10 @@ const dropLine: React.CSSProperties = {
   boxShadow: `0 0 6px ${T.primary}40`,
 };
 
-export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, serviceId, version, onExpand, onRemove, onMove, onFullscreen, onSlideInsert, onSlideDelete, onSectionChange }: SongListProps) {
+export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, serviceId, version, serviceTemplate, onExpand, onRemove, onMove, onFullscreen, onSlideInsert, onSlideDelete, onSectionChange, onTemplateChange }: SongListProps) {
   const [editingSection, setEditingSection] = useState<number | null>(null);
   const [taggingSong, setTaggingSong] = useState<number | null>(null);
+  const [templateSong, setTemplateSong] = useState<number | null>(null);
   const sectioned = hasSections(songs);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
@@ -281,10 +287,26 @@ export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, servi
           <div style={{ fontSize: mob ? 13 : 13.5, fontWeight: 580, color: T.textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{song.title}</div>
           <div style={{ fontSize: mob ? 10.5 : 11, color: song.warn ? T.warningText : T.textMuted, marginTop: 1, display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
             {song.count} slides
+            {isTemplateId(song.template) && song.template !== serviceTemplate && (
+              <span style={{
+                fontSize: 9, fontWeight: 700, padding: "0 5px", borderRadius: 4,
+                background: T.accentLight, color: T.accentText, border: `1px solid ${T.accentMedium}`,
+                textTransform: "uppercase", letterSpacing: ".04em",
+              }}>{resolveTemplate(song.template).label}</span>
+            )}
             {song.warn && <><span style={{ color: T.warning }}>·</span><span style={{ color: T.warningText }}>{song.warn}</span></>}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }}>
+          {onTemplateChange && (
+            <button onClick={e => { e.stopPropagation(); setTemplateSong(templateSong === i ? null : i); }} style={{
+              width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent",
+              color: song.template ? T.accent : T.textMuted, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: 0, flexShrink: 0, opacity: song.template ? 1 : 0.5,
+              transition: "opacity .15s",
+            }} title="Slide template"><I.Layout s={12} /></button>
+          )}
           {onSectionChange && (
             <button onClick={e => { e.stopPropagation(); setTaggingSong(taggingSong === i ? null : i); }} style={{
               width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent",
@@ -308,6 +330,40 @@ export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, servi
           }}><I.X /></button>
         </div>
       </div>
+
+      {/* Inline template picker */}
+      {templateSong === i && onTemplateChange && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+            padding: mob ? "6px 10px 6px 44px" : "6px 14px 6px 52px",
+            borderBottom: `1px solid ${T.borderLight}`,
+            background: T.bgSubtle, animation: "sd .12s ease",
+          }}
+        >
+          <span style={{ fontSize: 11, color: T.textMuted, fontWeight: 600, flexShrink: 0 }}>Template:</span>
+          {[
+            { value: '', label: `Service default (${resolveTemplate(serviceTemplate).label})` },
+            ...Object.values(TEMPLATES).map(t => ({ value: t.id, label: t.label })),
+          ].map(opt => {
+            const active = (song.template ?? '') === opt.value;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => { onTemplateChange(i, opt.value); setTemplateSong(null); }}
+                style={{
+                  padding: "3px 10px", borderRadius: 99, fontSize: 11, fontWeight: 600,
+                  fontFamily: font, cursor: "pointer",
+                  border: `1px solid ${active ? T.accentMedium : T.border}`,
+                  background: active ? T.accentLight : T.surface,
+                  color: active ? T.accentText : T.textSecondary,
+                }}
+              >{opt.label}</button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Inline section tagger */}
       {taggingSong === i && onSectionChange && (
@@ -361,6 +417,7 @@ export function SongList({ songs, expandedSong: exp, mobile: mob, fade: f, servi
                 songIndex={i}
                 slideIndex={si}
                 mobile={mob}
+                template={song.template ?? serviceTemplate}
                 onFullscreen={onFullscreen}
                 onSlideDelete={onSlideDelete}
               />

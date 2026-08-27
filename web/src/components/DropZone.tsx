@@ -70,6 +70,7 @@ async function processFiles(files: FileList | File[]): Promise<ClientSong[]> {
       slides: parsed.slides.map(s => ({
         original: s.originalLines,
         translation: s.translationLines,
+        label: s.label,
       })),
     });
   }

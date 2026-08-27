@@ -6,6 +6,10 @@ export function slidesToFile(slides: ClientSlide[], filename: string): File {
     const parts: string[] = [];
     if (s.original.length > 0) parts.push(s.original.join('\n'));
     if (s.translation.length > 0) parts.push(s.translation.join('\n'));
+    // Real section labels ([Verse 1]…) re-import as labels; auto "Slide N" don't
+    if (parts.length > 0 && s.label && !/^Slide \d+$/.test(s.label)) {
+      parts[0] = `[${s.label}]\n${parts[0]}`;
+    }
     return parts.join('\n\n');
   }).join('\n\n');
   return new File([text], filename, { type: 'text/plain' });
@@ -18,26 +22,30 @@ interface DraftSongData {
   title: string;
   filename: string;
   section?: string;
+  template?: string;
   slides: ClientSlide[];
 }
 
 export interface Draft {
   savedAt: number;
   baseVersion: number;
+  serviceTemplate?: string;
   songs: DraftSongData[];
 }
 
 // Persist in-progress edits locally so a refresh / navigation doesn't lose them.
 // File objects aren't serializable, so we store only the slide data and rebuild on load.
-export function saveDraft(serviceId: string, baseVersion: number, songs: ClientSong[], savedAt: number) {
+export function saveDraft(serviceId: string, baseVersion: number, songs: ClientSong[], savedAt: number, serviceTemplate?: string) {
   try {
     const data: Draft = {
       savedAt,
       baseVersion,
+      serviceTemplate,
       songs: songs.map(s => ({
         title: s.title,
         filename: s.filename,
         section: s.section,
+        template: s.template,
         slides: s.slides,
       })),
     };
@@ -72,6 +80,7 @@ export function draftToSongs(d: Draft): ClientSong[] {
     title: s.title,
     filename: s.filename,
     section: s.section,
+    template: s.template,
     slides: s.slides,
     count: s.slides.length,
     ok: true,

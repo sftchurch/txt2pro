@@ -8,11 +8,12 @@ interface PublishModalProps {
   service: Service;
   songs: ClientSong[];
   mobile: boolean;
+  template: string;
   onClose: () => void;
   onPublished: (result: PublishResult) => void;
 }
 
-export function PublishModal({ service, songs, mobile: mob, onClose, onPublished }: PublishModalProps) {
+export function PublishModal({ service, songs, mobile: mob, template, onClose, onPublished }: PublishModalProps) {
   const [note, setNote] = useState('');
   const [publishing, setPublishing] = useState(false);
 
@@ -31,10 +32,12 @@ export function PublishModal({ service, songs, mobile: mob, onClose, onPublished
       const result = await publishService(
         service.title,
         service.service_date,
+        template,
         songs.map(s => ({
           title: s.title,
           filename: s.filename,
           file: s.file,
+          template: s.template,
           slides: s.slides,
         })),
         note,

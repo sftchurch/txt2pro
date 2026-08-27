@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { I } from './Icons';
 import { T, card, anim, font } from '../theme';
 import { fetchServices, fetchCalendar, createService, deleteService } from '../lib/api';
+import { TEMPLATES, resolveTemplate, isTemplateId } from '@shared/templates';
 import type { Service, CalendarEvent } from '../lib/types';
 
 interface ServiceListProps {
@@ -140,12 +141,14 @@ function nextSunday(): string {
   return next.toISOString().split('T')[0];
 }
 
-function toService(svc: { id: string; service_date: string; title: string; current_version: number }): Service {
+function toService(svc: { id: string; service_date: string; title: string; current_version: number; template?: string | null }): Service {
   return {
     id: svc.id,
     service_date: svc.service_date,
     title: svc.title,
     current_version: svc.current_version,
+    // Adopt the server's answer — an existing published service keeps its template
+    template: svc.template ?? 'main',
     created_at: new Date().toISOString(),
     checksum: null,
     song_count: null,
@@ -185,6 +188,13 @@ function ServiceCard({ svc, mob, isLast, dimmed, onSelect, onDelete, confirmId, 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: mob ? 13 : 14, fontWeight: 580, color: T.textPrimary, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{svc.title}</span>
+          {isTemplateId(svc.template) && svc.template !== 'main' && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 4,
+              background: T.accentLight, color: T.accentText, border: `1px solid ${T.accentMedium}`,
+              textTransform: "uppercase", letterSpacing: ".04em", flexShrink: 0,
+            }}>{resolveTemplate(svc.template).label}</span>
+          )}
         </div>
         <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 1 }}>{svc.service_date}</div>
       </div>
@@ -218,6 +228,8 @@ export function ServiceList({ mobile: mob, fade: f, onSelect, onCreate }: Servic
   const [showCreate, setShowCreate] = useState(false);
   const [createTitle, setCreateTitle] = useState('Sunday Service');
   const [createDate, setCreateDate] = useState(nextSunday);
+  const [createTemplate, setCreateTemplate] = useState('main');
+  const [templateTouched, setTemplateTouched] = useState(false);
   const [creating, setCreating] = useState(false);
   const [creatingDate, setCreatingDate] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -255,11 +267,19 @@ export function ServiceList({ mobile: mob, fade: f, onSelect, onCreate }: Servic
     if (!createTitle.trim() || !createDate) return;
     setCreating(true);
     try {
-      const svc = await createService(createTitle.trim(), createDate);
+      const svc = await createService(createTitle.trim(), createDate, createTemplate);
       onCreate(toService(svc));
     } catch (e) {
       console.error(e);
       setCreating(false);
+    }
+  };
+
+  // Typing "youth" in the title pre-selects the Youth template (still overridable)
+  const handleTitleChange = (title: string) => {
+    setCreateTitle(title);
+    if (!templateTouched) {
+      setCreateTemplate(/youth/i.test(title) ? 'youth' : 'main');
     }
   };
 
@@ -499,7 +519,7 @@ export function ServiceList({ mobile: mob, fade: f, onSelect, onCreate }: Servic
                   <input
                     type="text"
                     value={createTitle}
-                    onChange={e => setCreateTitle(e.target.value)}
+                    onChange={e => handleTitleChange(e.target.value)}
                     autoFocus
                     onKeyDown={e => {
                       if (e.key === 'Enter') handleCreate();
@@ -530,6 +550,26 @@ export function ServiceList({ mobile: mob, fade: f, onSelect, onCreate }: Servic
                       outline: "none",
                     }}
                   />
+                </div>
+                <div style={{ flex: mob ? undefined : 0 }}>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>Template</label>
+                  <div style={{ display: "flex", borderRadius: 8, border: `1px solid ${T.border}`, overflow: "hidden" }}>
+                    {Object.values(TEMPLATES).map(t => {
+                      const active = createTemplate === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => { setCreateTemplate(t.id); setTemplateTouched(true); }}
+                          style={{
+                            padding: "8px 14px", border: "none", cursor: "pointer",
+                            fontSize: 12.5, fontWeight: 600, fontFamily: font,
+                            background: active ? (t.id === 'main' ? T.primaryLight : T.accentLight) : T.surface,
+                            color: active ? (t.id === 'main' ? T.primaryText : T.accentText) : T.textMuted,
+                          }}
+                        >{t.label}</button>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, alignSelf: mob ? "flex-end" : "flex-end" }}>
                   <button
