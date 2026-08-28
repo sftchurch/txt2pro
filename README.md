@@ -7,8 +7,11 @@ slides in a browser, publish a versioned `.proBundle`, and let a small agent on
 the ProPresenter Mac pull it down automatically before the service. No more
 building bilingual slides by hand every week.
 
-Built for a Russian/English church, but nothing in it is language-specific —
-any "original + translation" pair works.
+txt2pro was built specifically for [Solid Foundation Texas](https://github.com/sftchurch),
+a Russian/English church — the slide look, fonts, and calendar defaults are
+ours. Nothing in it is language-specific, though: any "original + translation"
+pair works. You're welcome to **fork it** and adapt it to your church, and to
+**open an issue or pull request** if you have an improvement to suggest.
 
 <p align="center">
   <img src="docs/screenshots/editor.png" alt="txt2pro service editor: uploaded songs with slide thumbnails rendered the way ProPresenter will show them" width="860">
@@ -27,6 +30,7 @@ any "original + translation" pair works.
 - [API](#api)
 - [Limitations](#limitations)
 - [Credits](#credits)
+- [Contributing](#contributing)
 - [License](#license)
 
 ## How it works
@@ -218,9 +222,15 @@ parity). A service has a default template and any song can override it.
 | **Main** (default) | 1920×1080, two boxes: original on top (white, 120 pt) and translation below (gold, 100 pt). Text clips rather than shrinks, exactly like the exported cue. | [Linux Biolinum](https://libertine-fonts.org/) |
 | **Youth** | One full-screen box, PT Serif 100 pt white on black, middle-aligned, original and translation stacked; section labels become colored cue groups (verse / chorus / bridge …). | [PT Serif](https://fonts.google.com/specimen/PT+Serif) |
 
-Install the template's font on the Mac that runs ProPresenter; otherwise
-ProPresenter substitutes and line wrapping will differ from the preview.
-Adding a template is adding an entry to `TEMPLATES` — no other code changes.
+Both templates are simply what our church projects with — Linux Biolinum is
+Solid Foundation Texas's house font, not a requirement of the tool. To use a
+different font: change `fontName` / `fontFamily` for the template
+(`src/lib/template.ts` holds the Main style, `src/lib/templates.ts` the rest),
+add a matching `@font-face` in `web/index.html` with the `.woff2` in
+`web/public/fonts/` so previews measure with the same font, and install the
+font on the Mac that runs ProPresenter — otherwise ProPresenter substitutes
+and line wrapping will differ from the preview. Adding a whole new template is
+adding an entry to `TEMPLATES` — no other code changes.
 
 ## Repository layout
 
@@ -295,8 +305,13 @@ All routes are JSON unless noted. Storage layout in R2 is
   SIL Open Font License, bundled in `web/public/fonts/` for preview parity.
 - Runs on [Cloudflare](https://www.cloudflare.com/) Pages, Workers, D1 and R2.
 
-Made for [Solid Foundation Texas](https://github.com/sftchurch). Issues and
-pull requests are welcome.
+## Contributing
+
+This is a small volunteer-maintained project built for one church's workflow,
+so expect some Solid Foundation Texas-specific defaults. Forks are welcome
+(that's what the MIT license is for), and so are issues and pull requests —
+bug reports, lyric-format edge cases, ProPresenter compatibility findings,
+or ideas that would help other bilingual churches.
 
 ## License
 
